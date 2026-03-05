@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Node
+node_modules/
+dist/
+.next/
+.vite/
+*.local
+
+# Data (don't commit raw audio or large files)
+data/raw/*.mp3
+data/raw/*.wav
+data/processed/*.pkl
+data/models/*.pt
+data/models/*.onnx
+
+# MLflow
+mlruns/
+mlflow.db
+
+# Airflow
+airflow/logs/
+airflow/plugins/
+
+# Docker
+.docker/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Secrets
+*.pem
+*.key
+secrets/

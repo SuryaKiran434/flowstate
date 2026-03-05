@@ -1,0 +1,433 @@
+openapi: 3.0.3
+info:
+  title: Flowstate API
+  description: |
+    Emotional arc engine that curates dynamic listening sessions.
+    
+    **Auth:** All endpoints except `/auth/*` require a Bearer token obtained 
+    via the Spotify OAuth2 PKCE flow at `/api/v1/auth/spotify/login`.
+  version: 1.0.0
+  contact:
+    name: Surya Kiran Katragadda
+    url: https://github.com/SuryaKiran434/flowstate
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+  - url: https://flowstate-api.fly.dev/api/v1
+    description: Production
+
+tags:
+  - name: auth
+    description: Spotify OAuth2 PKCE authentication
+  - name: arc
+    description: Emotional arc generation
+  - name: session
+    description: Listening session management
+  - name: tracks
+    description: Track features and metadata
+  - name: health
+    description: Service health
+
+paths:
+
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  version:
+                    type: string
+                    example: 1.0.0
+
+  /auth/spotify/login:
+    get:
+      tags: [auth]
+      summary: Initiate Spotify OAuth2 PKCE flow
+      description: Returns a Spotify authorization URL. Redirect the user to this URL.
+      responses:
+        '200':
+          description: Authorization URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth_url:
+                    type: string
+                    example: https://accounts.spotify.com/authorize?client_id=...
+
+  /auth/spotify/callback:
+    get:
+      tags: [auth]
+      summary: Handle Spotify OAuth callback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /arc/generate:
+    post:
+      tags: [arc]
+      summary: Generate an emotional arc session
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArcRequest'
+            example:
+              source_emotion: tense
+              target_emotion: peaceful
+              duration_minutes: 45
+              use_library: true
+      responses:
+        '200':
+          description: Arc generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArcResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /arc/{arc_id}:
+    get:
+      tags: [arc]
+      summary: Retrieve a previously generated arc
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: arc_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Arc details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArcResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /session/start:
+    post:
+      tags: [session]
+      summary: Start a playback session from an arc
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [arc_id]
+              properties:
+                arc_id:
+                  type: string
+                  format: uuid
+                device_id:
+                  type: string
+                  description: Spotify device ID for playback
+      responses:
+        '201':
+          description: Session started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+
+  /session/{session_id}/progress:
+    put:
+      tags: [session]
+      summary: Update session progress (track played/skipped)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [track_id, action]
+              properties:
+                track_id:
+                  type: string
+                  format: uuid
+                action:
+                  type: string
+                  enum: [played, skipped]
+      responses:
+        '200':
+          description: Progress updated, returns next track
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NextTrackResponse'
+
+  /tracks/{spotify_id}/features:
+    get:
+      tags: [tracks]
+      summary: Get audio features for a track
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spotify_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Track audio features
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackFeaturesResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ArcRequest:
+      type: object
+      required: [source_emotion, target_emotion, duration_minutes]
+      properties:
+        source_emotion:
+          type: string
+          enum: [energetic, happy, euphoric, peaceful, focused, romantic,
+                 nostalgic, neutral, melancholic, sad, tense, angry]
+        target_emotion:
+          type: string
+          enum: [energetic, happy, euphoric, peaceful, focused, romantic,
+                 nostalgic, neutral, melancholic, sad, tense, angry]
+        duration_minutes:
+          type: integer
+          minimum: 10
+          maximum: 180
+          example: 45
+        use_library:
+          type: boolean
+          default: true
+          description: Use the user's Spotify saved tracks as the track pool
+
+    ArcResponse:
+      type: object
+      properties:
+        arc_id:
+          type: string
+          format: uuid
+        source_emotion:
+          type: string
+        target_emotion:
+          type: string
+        arc_path:
+          type: array
+          items:
+            type: string
+          example: [tense, neutral, focused, peaceful]
+        tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArcTrack'
+        total_duration_ms:
+          type: integer
+        generated_at:
+          type: string
+          format: date-time
+
+    ArcTrack:
+      type: object
+      properties:
+        position:
+          type: integer
+        track_id:
+          type: string
+          format: uuid
+        spotify_id:
+          type: string
+        title:
+          type: string
+        artist:
+          type: string
+        duration_ms:
+          type: integer
+        emotion_label:
+          type: string
+        emotion_confidence:
+          type: number
+          format: float
+        arc_segment:
+          type: integer
+        transition_note:
+          type: string
+          example: Tempo drops from 140 to 95 BPM, energy decreasing
+
+    SessionResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        arc_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, completed, abandoned]
+        current_track:
+          $ref: '#/components/schemas/ArcTrack'
+        started_at:
+          type: string
+          format: date-time
+
+    NextTrackResponse:
+      type: object
+      properties:
+        next_track:
+          $ref: '#/components/schemas/ArcTrack'
+        arc_progress_pct:
+          type: number
+          format: float
+          description: How far through the arc (0.0 to 1.0)
+        session_complete:
+          type: boolean
+
+    TrackFeaturesResponse:
+      type: object
+      properties:
+        spotify_id:
+          type: string
+        title:
+          type: string
+        artist:
+          type: string
+        features:
+          type: object
+          properties:
+            valence:
+              type: number
+            energy:
+              type: number
+            tempo:
+              type: number
+            danceability:
+              type: number
+            mfcc_mean:
+              type: array
+              items:
+                type: number
+        emotion:
+          type: object
+          properties:
+            label:
+              type: string
+            confidence:
+              type: number
+            all_scores:
+              type: object
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+        expires_in:
+          type: integer
+
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized — missing or invalid Bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    loc:
+                      type: array
+                      items:
+                        type: string
+                    msg:
+                      type: string
+                    type:
+                      type: string
