@@ -360,16 +360,17 @@ def extract_audio_features(**context):
                     INSERT INTO track_features (
                         id, track_id,
                         tempo_librosa, spectral_centroid, zero_crossing_rate,
-                        mfcc_mean, mfcc_std, chroma_mean
+                        rms_energy, mfcc_mean, mfcc_std, chroma_mean
                     ) VALUES (
                         gen_random_uuid(), :track_id,
                         :tempo, :spectral_centroid, :zcr,
-                        :mfcc_mean, :mfcc_std, :chroma_mean
+                        :rms_energy, :mfcc_mean, :mfcc_std, :chroma_mean
                     )
                     ON CONFLICT (track_id) DO UPDATE SET
                         tempo_librosa      = EXCLUDED.tempo_librosa,
                         spectral_centroid  = EXCLUDED.spectral_centroid,
                         zero_crossing_rate = EXCLUDED.zero_crossing_rate,
+                        rms_energy         = EXCLUDED.rms_energy,
                         mfcc_mean          = EXCLUDED.mfcc_mean,
                         mfcc_std           = EXCLUDED.mfcc_std,
                         chroma_mean        = EXCLUDED.chroma_mean,
