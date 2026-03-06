@@ -2,7 +2,7 @@
 
 > *Music that moves with you.*
 
-**Flowstate** is an emotional arc engine that curates dynamic listening sessions based on where you are emotionally and where you want to be. Instead of static mood playlists, Flowstate builds a personalized musical journey — using audio ML, graph-based path planning, and real-time Spotify playback — to guide you from your current emotional state to your target one.
+**Flowstate** is an emotional arc engine that curates dynamic listening sessions based on where you are emotionally and where you want to be. Instead of static mood playlists, Flowstate asks *"where are you, and where do you want to go?"* — then constructs a musical bridge using audio ML, graph-based path planning, and real-time Spotify playback.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -14,52 +14,57 @@
 
 ## ✨ What Makes Flowstate Different
 
-Most music apps ask *"what mood are you in?"* and serve you a static playlist. Flowstate asks *"where are you, and where do you want to go?"* — then constructs a musical bridge between those two states using:
+- **Custom Audio ML Pipeline** — 42-dimensional feature vectors (MFCCs, chroma, spectral centroid, tempo) extracted via **yt-dlp + librosa**. Works globally for Telugu, Tamil, Hindi, and international catalogs — no API restrictions, no language limits.
+- **Graph-based Arc Planning** — modified Dijkstra on a 12-node emotion graph finds the smoothest perceptual path between any two emotional states.
+- **Real-time Playback** — Spotify Web Playback SDK with a live D3.js arc visualizer.
 
-- **Audio ML** — emotion classification trained on 10K+ tracks using MFCCs, chroma, valence, and tempo features
-- **Graph-based Arc Planning** — a modified Dijkstra algorithm that finds the smoothest emotional path between two states across a weighted emotion graph
-- **Real-time Playback** — Spotify Web Playback SDK with a live D3.js arc visualizer showing your progress through the journey
+> **Why yt-dlp instead of Spotify Audio Features?** Spotify deprecated `/audio-features` for new apps in 2025 (requires 250k MAU for access). Flowstate's yt-dlp + librosa pipeline sources audio from YouTube — global coverage, all languages, on-demand extraction as catalogs grow.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        FRONTEND (React)                      │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────┐  │
-│  │ Mood Input  │  │  Arc Viz     │  │  Spotify Playback  │  │
-│  │ (Source →   │  │  (D3.js)     │  │  SDK Widget        │  │
-│  │  Target)    │  │              │  │                    │  │
-│  └──────┬──────┘  └──────────────┘  └────────────────────┘  │
-└─────────┼───────────────────────────────────────────────────┘
-          │ REST API
-┌─────────▼───────────────────────────────────────────────────┐
-│                      BACKEND (FastAPI)                       │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────┐  │
-│  │ /arc/generate│  │ /session/*    │  │ /auth/spotify    │  │
-│  │              │  │               │  │ (OAuth2 PKCE)    │  │
-│  └──────┬───────┘  └───────┬───────┘  └──────────────────┘  │
-│         │                  │                                  │
-│  ┌──────▼──────────────────▼──────────────────────────────┐  │
-│  │              Arc Planning Service                       │  │
-│  │   Emotion Graph → Dijkstra → Ranked Track Sequence     │  │
-│  └──────────────────────────┬───────────────────────────┘   │
-│                              │                               │
-│  ┌───────────────────────────▼───────────────────────────┐  │
-│  │              ML Inference Service                      │  │
-│  │   Audio Feature Store → Emotion Classifier → Score    │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-┌─────────────────────────────▼───────────────────────────────┐
-│                    DATA LAYER                                │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────┐  │
-│  │  PostgreSQL  │  │  Redis Cache  │  │  Airflow DAGs    │  │
-│  │  + pgvector  │  │  (Sessions)   │  │  (Feature Store  │  │
-│  │              │  │               │  │   Enrichment)    │  │
-│  └──────────────┘  └───────────────┘  └──────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                     FRONTEND (React)                        │
+│   Mood Input (Source→Target) │ Arc Viz (D3.js) │ Playback  │
+└──────────────────────┬─────────────────────────────────────┘
+                       │ REST API
+┌──────────────────────▼─────────────────────────────────────┐
+│                    BACKEND (FastAPI)                         │
+│   /arc/generate  │  /session/*  │  /auth/spotify (PKCE)    │
+│                                                             │
+│   Arc Planning Service  →  Dijkstra on Emotion Graph       │
+│   ML Inference Service  →  Emotion Classifier (librosa)    │
+└──────────────────────┬─────────────────────────────────────┘
+                       │
+┌──────────────────────▼─────────────────────────────────────┐
+│                     DATA LAYER                               │
+│   PostgreSQL + pgvector  │  Redis  │  Airflow DAGs          │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🎵 Audio Feature Pipeline
+
+```
+Spotify Search API → track metadata
+         │
+         ▼
+yt-dlp → YouTube search → 30s audio clip
+         │
+         ▼
+librosa feature extraction
+   ├── MFCCs (13 mean + 13 std)   — timbral texture       [26 dims]
+   ├── Chroma mean (12)           — harmonic/pitch content [12 dims]
+   ├── Spectral centroid          — brightness             [ 1 dim ]
+   ├── Zero crossing rate         — noisiness              [ 1 dim ]
+   ├── RMS energy                 — loudness proxy         [ 1 dim ]
+   └── Tempo (BPM)               — energy indicator       [ 1 dim ]
+         │                          Total: 42 dimensions
+         ▼
+PostgreSQL track_features → Emotion Classifier → Arc Planning
 ```
 
 ---
@@ -70,94 +75,27 @@ Most music apps ask *"what mood are you in?"* and serve you a static playlist. F
 flowstate/
 ├── backend/
 │   ├── app/
-│   │   ├── api/
-│   │   │   └── v1/
-│   │   │       └── endpoints/
-│   │   │           ├── arc.py          # Arc generation endpoints
-│   │   │           ├── session.py      # Session management
-│   │   │           ├── tracks.py       # Track feature endpoints
-│   │   │           └── auth.py         # Spotify OAuth2 PKCE
-│   │   ├── core/
-│   │   │   ├── config.py               # Settings & env vars
-│   │   │   └── security.py             # JWT + OAuth helpers
-│   │   ├── db/
-│   │   │   ├── base.py                 # SQLAlchemy base
-│   │   │   └── session.py              # DB session factory
+│   │   ├── api/v1/endpoints/
+│   │   │   ├── auth.py              # Spotify OAuth2 PKCE
+│   │   │   └── tracks.py            # Library + feature endpoints
 │   │   ├── models/
-│   │   │   ├── track.py                # Track ORM model
-│   │   │   ├── session.py              # Session ORM model
-│   │   │   └── emotion.py              # Emotion node model
-│   │   ├── schemas/
-│   │   │   ├── arc.py                  # Arc request/response schemas
-│   │   │   ├── track.py                # Track schemas
-│   │   │   └── session.py              # Session schemas
-│   │   ├── services/
-│   │   │   ├── arc_planner.py          # Graph-based arc algorithm
-│   │   │   ├── spotify_client.py       # Spotify Web API wrapper
-│   │   │   └── session_manager.py      # Session state service
-│   │   └── ml/
-│   │       ├── emotion_classifier.py   # PyTorch emotion model
-│   │       ├── feature_extractor.py    # librosa audio features
-│   │       └── embeddings.py           # Track embedding store
-│   ├── tests/
-│   │   ├── unit/
-│   │   │   ├── test_arc_planner.py
-│   │   │   └── test_emotion_classifier.py
-│   │   └── integration/
-│   │       ├── test_arc_api.py
-│   │       └── test_spotify_client.py
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── alembic/                        # DB migrations
+│   │   │   ├── track.py             # Track, TrackFeature, UserTrack ORM
+│   │   │   └── user.py              # User ORM
+│   │   └── services/
+│   │       ├── arc_planner.py       # Dijkstra arc algorithm
+│   │       └── spotify_client.py    # Spotify API wrapper
+│   ├── requirements.txt             # Includes yt-dlp + librosa
+│   └── Dockerfile                   # Includes ffmpeg for yt-dlp
 │
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── ArcVisualizer.jsx       # D3.js emotional arc
-│   │   │   ├── MoodSelector.jsx        # Emotion input UI
-│   │   │   ├── PlayerWidget.jsx        # Spotify playback widget
-│   │   │   └── TrackCard.jsx           # Track display
-│   │   ├── pages/
-│   │   │   ├── Home.jsx
-│   │   │   ├── Session.jsx
-│   │   │   └── Callback.jsx            # Spotify OAuth callback
-│   │   ├── hooks/
-│   │   │   ├── useArc.js               # Arc generation hook
-│   │   │   └── useSpotifyPlayer.js     # Playback SDK hook
-│   │   └── utils/
-│   │       ├── api.js                  # Axios API client
-│   │       └── emotions.js             # Emotion constants
-│   ├── package.json
-│   └── Dockerfile
-│
-├── airflow/
-│   └── dags/
-│       ├── feature_enrichment_dag.py   # Daily audio feature updates
-│       └── model_retrain_dag.py        # Weekly model retraining
-│
-├── data/
-│   ├── raw/                            # Raw Spotify API pulls
-│   ├── processed/                      # Feature-engineered data
-│   └── models/                         # Saved PyTorch checkpoints
+├── airflow/dags/
+│   └── feature_enrichment_dag.py    # Search → yt-dlp → librosa → DB
 │
 ├── docs/
-│   ├── PRD.md                          # Product Requirements Document
-│   ├── SYSTEM_DESIGN.md                # System design doc
-│   ├── API.md                          # API reference
-│   └── DB_SCHEMA.md                    # Database schema
+│   ├── PRD.md
+│   ├── DB_SCHEMA.md
+│   └── AUDIO_PIPELINE.md            # yt-dlp + librosa architecture
 │
-├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml                      # CI: lint → test → build
-│   │   └── deploy.yml                  # CD: deploy on main merge
-│   └── ISSUE_TEMPLATE/
-│       ├── bug_report.md
-│       └── feature_request.md
-│
-├── docker-compose.yml
-├── .env.example
-├── .gitignore
-└── README.md
+└── docker-compose.yml               # Airflow installs yt-dlp + ffmpeg on startup
 ```
 
 ---
@@ -166,9 +104,7 @@ flowstate/
 
 ### Prerequisites
 - Docker & Docker Compose
-- Spotify Developer account (free) — [Create app here](https://developer.spotify.com/dashboard)
-- Python 3.11+ (for local dev)
-- Node.js 18+
+- Spotify Developer account — [Create app](https://developer.spotify.com/dashboard)
 
 ### 1. Clone & configure
 
@@ -176,174 +112,75 @@ flowstate/
 git clone https://github.com/SuryaKiran434/flowstate.git
 cd flowstate
 cp .env.example .env
-# Fill in your Spotify Client ID and Client Secret in .env
+# Fill in SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET
 ```
 
-### 2. Run everything
+### 2. Start everything
 
 ```bash
 docker-compose up --build
 ```
 
-That's it. Services will be available at:
-
 | Service | URL |
 |---|---|
 | Frontend | http://localhost:3000 |
 | Backend API | http://localhost:8000 |
-| API Docs (Swagger) | http://localhost:8000/docs |
-| Airflow UI | http://localhost:8080 |
+| Swagger UI | http://localhost:8000/docs |
+| Airflow | http://localhost:8080 |
+| MLflow | http://localhost:5001 |
 
-### 3. Local development (without Docker)
+### 3. Seed the feature store
 
 ```bash
-# Backend
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-
-# Frontend
-cd frontend
-npm install
-npm run dev
+# Log in at http://localhost:3000 first to store a Spotify token
+# Then trigger the pipeline:
+docker exec flowstate_airflow airflow dags trigger feature_enrichment
 ```
+
+The DAG will:
+1. Search Spotify for ~180 tracks across 18 artist queries
+2. For each track: yt-dlp → YouTube → librosa → 42-dim feature vector → PostgreSQL
+3. Log metrics to MLflow
 
 ---
 
-## 🧠 How the Arc Algorithm Works
+## 🧠 Arc Algorithm
 
-Flowstate models emotional space as a **weighted directed graph** where:
-
-- **Nodes** = 12 emotion states (energetic, peaceful, melancholic, euphoric, tense, nostalgic, romantic, angry, focused, sad, happy, neutral)
-- **Edges** = allowed transitions weighted by perceptual distance (how jarring is this jump?)
-- **Track scores** = each track in the feature store is assigned a primary emotion + confidence
-
-Given a source emotion `S` and target emotion `T` and a desired duration `D`:
-
-1. **Path Planning** — Run modified Dijkstra on the emotion graph to find the lowest-perceptual-cost path from `S` to `T`
-2. **Track Selection** — For each emotion node along the path, query pgvector for the top-k tracks closest to that node's centroid
-3. **Sequencing** — Order tracks within each node segment by ascending/descending energy to ensure smooth transitions
-4. **Output** — A ranked list of tracks with transition metadata
-
-```python
-# Simplified example
-arc = ArcPlanner()
-session = arc.generate(
-    source_emotion="tense",
-    target_emotion="peaceful",
-    duration_minutes=45,
-    track_pool=user_library_ids
-)
-# Returns: [track_1, track_2, ..., track_n] with emotion labels per segment
-```
+Emotion space modelled as a **weighted directed graph**:
+- **Nodes** — 12 states: energetic, peaceful, melancholic, euphoric, tense, nostalgic, romantic, angry, focused, sad, happy, neutral
+- **Edges** — perceptual transition costs (how jarring is this jump?)
+- Modified Dijkstra finds the lowest-cost emotional path from source → target
+- Track selection per segment uses pgvector similarity search on 42-dim embeddings
 
 ---
 
 ## 🤖 ML Model
 
-The emotion classifier is a lightweight feedforward neural network trained on audio features:
+Feedforward classifier trained on 42-dimensional librosa features:
 
-| Feature | Description |
-|---|---|
-| MFCCs (13) | Timbral texture |
-| Chroma (12) | Harmonic/pitch content |
-| Spectral Centroid | Brightness |
-| Tempo (BPM) | Energy proxy |
-| Valence* | Positivity (from Spotify API) |
-| Energy* | Intensity (from Spotify API) |
+| Feature Group | Dims | What It Captures |
+|---|---|---|
+| MFCC mean + std | 26 | Timbral texture and dynamics |
+| Chroma mean | 12 | Harmonic / pitch class content |
+| Spectral centroid | 1 | Brightness |
+| Zero crossing rate | 1 | Percussiveness / noisiness |
+| RMS energy | 1 | Loudness |
+| Tempo (BPM) | 1 | Energy |
 
-*\*Sourced from Spotify Audio Features API (free)*
-
-**Training data:** Spotify Audio Features for ~10,000 tracks across genres, labeled using a combination of Spotify's valence/energy dimensions and manual annotation.
-
-**Evaluation:** Held-out test set, reporting precision, recall, F1 per class. Experiments tracked with MLflow.
+Training and evaluation tracked with MLflow.
 
 ---
 
-## 📡 API Reference
-
-### Core Endpoints
-
-```
-POST   /api/v1/arc/generate          Generate an emotional arc session
-GET    /api/v1/arc/{arc_id}          Retrieve a generated arc
-POST   /api/v1/session/start         Start a playback session
-PUT    /api/v1/session/{id}/progress Update session progress
-GET    /api/v1/tracks/{id}/features  Get audio features for a track
-GET    /api/v1/auth/spotify/login    Initiate Spotify OAuth2 PKCE
-GET    /api/v1/auth/spotify/callback Handle OAuth callback
-```
-
-Full interactive docs at `/docs` (Swagger UI) when running locally.
-
----
-
-## 🗄️ Database Schema
-
-### Core Tables
-
-```sql
-tracks          -- Track metadata + Spotify IDs
-track_features  -- Audio features (MFCCs, chroma, tempo, valence, energy)
-track_emotions  -- ML-predicted emotion labels + confidence scores
-emotion_nodes   -- Emotion graph nodes with centroid feature vectors
-emotion_edges   -- Directed transitions with perceptual distance weights
-sessions        -- User listening sessions
-session_tracks  -- Ordered track list per session with emotion labels
-users           -- Spotify user profiles (OAuth)
-```
-
----
-
-## 🔄 Data Pipeline (Airflow)
-
-Two scheduled DAGs:
-
-**`feature_enrichment_dag`** — runs daily
-1. Pull new tracks from Spotify (saved tracks, followed playlists)
-2. Fetch audio features via Spotify Audio Features API
-3. Download 30s preview clips
-4. Extract librosa features
-5. Run inference → store emotion labels
-6. Update pgvector embeddings
-
-**`model_retrain_dag`** — runs weekly
-1. Pull newly labeled tracks from feature store
-2. Retrain emotion classifier
-3. Evaluate on held-out test set
-4. Promote if F1 improvement > threshold
-5. Log to MLflow
-
----
-
-## 🧪 Testing
-
-```bash
-# Unit tests
-cd backend && pytest tests/unit -v --cov=app --cov-report=html
-
-# Integration tests (requires running DB)
-pytest tests/integration -v
-
-# Load testing
-cd backend && locust -f tests/load/locustfile.py
-```
-
-Target: **80%+ coverage** on core services.
-
----
-
-## 📊 How I'd Scale This to 1M Users
+## 📊 How I'd Scale to 1M Users
 
 | Challenge | Solution |
 |---|---|
-| Audio feature extraction is slow | Pre-compute offline via Airflow, serve from pgvector |
+| yt-dlp slow (5–15s/track) | Pre-compute via Airflow; serve from pgvector |
 | Arc generation latency | Cache common source→target paths in Redis |
-| ML inference at scale | Export to ONNX, serve via Triton Inference Server |
-| DB reads under load | Read replicas + pgbouncer connection pooling |
-| Feature store growth | Partition `track_features` by ingest date |
-| Cold start (new user, no library) | Fall back to genre-based emotion graph seeding |
+| ML inference at scale | Export to ONNX, serve via Triton |
+| DB reads under load | Read replicas + pgbouncer |
+| YouTube blocks at scale | License audio via Musicstax/AudD for production |
+| Cold start (new user) | Seed from `/me/top/artists` + Search API |
 
 ---
 
@@ -351,46 +188,29 @@ Target: **80%+ coverage** on core services.
 
 | Layer | Technology |
 |---|---|
-| Audio ML | PyTorch, librosa, essentia |
-| Backend | FastAPI, SQLAlchemy, Alembic |
+| Audio pipeline | yt-dlp, librosa, ffmpeg |
+| ML | scikit-learn, PyTorch, MLflow |
+| Backend | FastAPI, SQLAlchemy |
 | Database | PostgreSQL 15 + pgvector |
 | Cache | Redis |
-| Data Pipeline | Apache Airflow |
-| Experiment Tracking | MLflow |
-| Frontend | React 18, D3.js, Tailwind CSS |
+| Pipeline | Apache Airflow |
+| Frontend | React 18, D3.js |
 | Playback | Spotify Web Playback SDK |
 | Auth | Spotify OAuth2 PKCE |
-| Containerization | Docker, Docker Compose |
-| CI/CD | GitHub Actions |
-| Deployment | Vercel (frontend), Fly.io (backend) |
-
----
-
-## 📋 SDLC Artifacts
-
-All project documentation lives in `/docs`:
-
-- [`PRD.md`](docs/PRD.md) — Product Requirements Document
-- [`SYSTEM_DESIGN.md`](docs/SYSTEM_DESIGN.md) — System design with diagrams
-- [`API.md`](docs/API.md) — Full API specification
-- [`DB_SCHEMA.md`](docs/DB_SCHEMA.md) — Database schema with ERD
+| Infra | Docker, Docker Compose, GitHub Actions |
 
 ---
 
 ## 🗺️ Roadmap
 
-- [x] Project scaffold & architecture
-- [ ] Spotify OAuth2 PKCE integration
-- [ ] Audio feature extraction pipeline
-- [ ] Emotion classifier (v1)
-- [ ] Arc planning algorithm
-- [ ] FastAPI backend (core endpoints)
-- [ ] React frontend + D3.js arc visualizer
-- [ ] Airflow DAGs
-- [ ] Docker Compose setup
+- [x] Spotify OAuth2 PKCE
+- [x] Track seeding via Spotify Search API
+- [x] yt-dlp + librosa audio feature pipeline
+- [ ] Emotion classifier (Phase 3)
+- [ ] Arc planning API endpoints
+- [ ] D3.js arc visualizer
+- [ ] Spotify Web Playback SDK
 - [ ] CI/CD pipeline
-- [ ] Load testing
-- [ ] Public beta
 
 ---
 
@@ -399,13 +219,12 @@ All project documentation lives in `/docs`:
 **Surya Kiran Katragadda**
 - GitHub: [@SuryaKiran434](https://github.com/SuryaKiran434)
 - LinkedIn: [katragadda-suryakiran](https://www.linkedin.com/in/katragadda-suryakiran/)
-- Instagram: [@surya_katragadda](https://www.instagram.com/surya_katragadda/)
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
 ---
 

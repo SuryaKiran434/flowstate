@@ -22,10 +22,16 @@ pydantic==2.5.2
 pydantic-settings==2.1.0
 
 # ─── Audio ML ────────────────────────────────────────────────────
+# librosa: feature extraction (MFCCs, chroma, spectral, tempo)
 librosa==0.10.1
 numpy==1.26.2
 scipy==1.11.4
 scikit-learn==1.3.2
+# yt-dlp: sources audio from YouTube for tracks missing Spotify previews.
+# Spotify Audio Features API (/audio-features) is blocked in Development Mode
+# and deprecated for new apps. yt-dlp + librosa replaces it with richer,
+# market-agnostic features that work for Telugu, Tamil, Hindi, and all global catalogs.
+yt-dlp>=2024.1.0
 
 # ─── Dev & Testing ───────────────────────────────────────────────
 pytest==7.4.3
@@ -34,6 +40,6 @@ pytest-cov==4.1.0
 ruff==0.1.6
 
 # NOTE: torch, mlflow, and apache-airflow excluded intentionally.
-# - torch: install separately when building the ML module
+# - torch: install separately when building the ML module (Phase 3)
 # - mlflow: runs in its own container (see docker-compose.yml)
 # - apache-airflow: runs in its own container (requires sqlalchemy<2.0, conflicts here)

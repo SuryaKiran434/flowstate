@@ -5,18 +5,18 @@ services:
     image: pgvector/pgvector:pg15
     container_name: flowstate_db
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-flowstate}
+      POSTGRES_USER:     ${POSTGRES_USER:-flowstate}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flowstate_dev}
-      POSTGRES_DB: ${POSTGRES_DB:-flowstate}
+      POSTGRES_DB:       ${POSTGRES_DB:-flowstate}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U flowstate"]
+      test:     ["CMD-SHELL", "pg_isready -U flowstate"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout:  5s
+      retries:  5
 
   # ─── Redis ───────────────────────────────────────────────────────
   redis:
@@ -25,25 +25,27 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:     ["CMD", "redis-cli", "ping"]
       interval: 10s
-      timeout: 3s
-      retries: 5
+      timeout:  3s
+      retries:  5
 
   # ─── FastAPI Backend ─────────────────────────────────────────────
+  # Dockerfile installs ffmpeg + yt-dlp so the backend can also
+  # trigger audio extraction if needed outside Airflow.
   backend:
     build:
-      context: ./backend
+      context:    ./backend
       dockerfile: Dockerfile
     container_name: flowstate_backend
     environment:
-      DATABASE_URL: postgresql://flowstate:flowstate_dev@db:5432/flowstate
-      REDIS_URL: redis://redis:6379/0
-      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
+      DATABASE_URL:         postgresql://flowstate:flowstate_dev@db:5432/flowstate
+      REDIS_URL:            redis://redis:6379/0
+      SPOTIFY_CLIENT_ID:    ${SPOTIFY_CLIENT_ID}
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET}
       SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI:-http://127.0.0.1:3000/callback}
-      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
-      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SECRET_KEY:           ${SECRET_KEY:-dev_secret_key_change_in_production}
+      ENVIRONMENT:          ${ENVIRONMENT:-development}
     ports:
       - "8000:8000"
     depends_on:
@@ -59,11 +61,11 @@ services:
   # ─── React Frontend ──────────────────────────────────────────────
   frontend:
     build:
-      context: ./frontend
+      context:    ./frontend
       dockerfile: Dockerfile
     container_name: flowstate_frontend
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+      VITE_API_URL:          ${VITE_API_URL:-http://localhost:8000/api/v1}
       VITE_SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
     ports:
       - "3000:3000"
@@ -72,18 +74,22 @@ services:
     volumes:
       - ./frontend/src:/app/src
 
-  # ─── Apache Airflow ──────────────────────────────────────────────
+  # ─── Apache Airflow (custom image with librosa + yt-dlp baked in) ─
+  # Uses airflow/Dockerfile which pre-installs ffmpeg, librosa, yt-dlp,
+  # and numpy so packages survive container restarts.
   airflow:
-    image: apache/airflow:2.8.0-python3.11
+    build:
+      context:    ./airflow
+      dockerfile: Dockerfile
     container_name: flowstate_airflow
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__EXECUTOR:             LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://flowstate:flowstate_dev@db:5432/airflow
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-dev_airflow_secret}
-      DATABASE_URL: postgresql://flowstate:flowstate_dev@db:5432/flowstate
-      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
-      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET}
+      AIRFLOW__CORE__LOAD_EXAMPLES:        "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY:      ${AIRFLOW_SECRET_KEY:-dev_airflow_secret}
+      DATABASE_URL:                        postgresql://flowstate:flowstate_dev@db:5432/flowstate
+      SPOTIFY_CLIENT_ID:                   ${SPOTIFY_CLIENT_ID}
+      SPOTIFY_CLIENT_SECRET:               ${SPOTIFY_CLIENT_SECRET}
     ports:
       - "8080:8080"
     depends_on:
@@ -95,7 +101,7 @@ services:
     command: >
       bash -c "
         airflow db migrate &&
-        airflow users create --username admin --password admin --firstname Surya --lastname Kiran --role Admin --email surya@flowstate.dev ;
+        airflow users create --username admin --password admin --firstname Surya --lastname Kiran --role Admin --email surya@flowstate.dev 2>/dev/null || true &&
         airflow webserver & airflow scheduler
       "
 
@@ -109,7 +115,9 @@ services:
       - mlflow_data:/mlflow
     command: >
       bash -c "pip install mlflow psycopg2-binary -q &&
-               mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri /mlflow --default-artifact-root /mlflow/artifacts"
+               mlflow server --host 0.0.0.0 --port 5000
+                             --backend-store-uri /mlflow
+                             --default-artifact-root /mlflow/artifacts"
 
 volumes:
   postgres_data:

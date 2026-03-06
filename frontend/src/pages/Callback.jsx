@@ -1,31 +1,46 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+
 export default function Callback() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const [status, setStatus] = useState('Processing login...')
 
   useEffect(() => {
-    const token = searchParams.get('token')
+    const code  = searchParams.get('code')
+    const state = searchParams.get('state')
     const error = searchParams.get('error')
 
+    // Case 1: Spotify returned an error (user denied, etc.)
     if (error) {
       setStatus('Spotify login was cancelled or failed.')
       setTimeout(() => navigate('/'), 2000)
       return
     }
 
+    // Case 2: Already have a JWT token (redirect from backend)
+    const token = searchParams.get('token')
     if (token) {
-      // Store JWT in localStorage
       localStorage.setItem('flowstate_token', token)
       setStatus('Logged in! Redirecting...')
       setTimeout(() => navigate('/dashboard'), 500)
       return
     }
 
-    // No token and no error — unexpected state
-    setStatus('Something went wrong. Redirecting...')
+    // Case 3: Spotify redirected here with code + state
+    // Forward to backend callback endpoint to exchange for tokens
+    if (code && state) {
+      setStatus('Completing login...')
+      const backendCallback = `${API_URL}/auth/spotify/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
+      // Backend will redirect back here with ?token= after exchange
+      window.location.href = backendCallback
+      return
+    }
+
+    // Case 4: Unexpected state
+    setStatus('Something went wrong. Redirecting back...')
     setTimeout(() => navigate('/'), 2000)
   }, [searchParams, navigate])
 
@@ -54,7 +69,6 @@ const styles = {
   },
   spinner: {
     fontSize: '48px',
-    animation: 'pulse 1s infinite',
     marginBottom: '16px',
   },
   text: {
