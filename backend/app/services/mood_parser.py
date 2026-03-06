@@ -61,7 +61,7 @@ Respond with ONLY valid JSON in exactly this format, no other text:
 class MoodParser:
     """
     Parses natural language mood descriptions into structured emotion pairs.
-    Uses Claude claude-sonnet-4-20250514 via the Anthropic API.
+    Uses Claude claude-haiku-4-5 via the Anthropic API.
     Falls back to keyword-based parsing if the API call fails.
     """
 
@@ -95,7 +95,7 @@ class MoodParser:
                     "anthropic-version": "2023-06-01",
                 },
                 json={
-                    "model":      "claude-sonnet-4-20250514",
+                    "model":      "claude-haiku-4-5",
                     "max_tokens": 200,
                     "system":     SYSTEM_PROMPT,
                     "messages":   [{"role": "user", "content": mood_text}],
