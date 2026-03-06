@@ -46,6 +46,7 @@ services:
       SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI:-http://127.0.0.1:3000/callback}
       SECRET_KEY:           ${SECRET_KEY:-dev_secret_key_change_in_production}
       ENVIRONMENT:          ${ENVIRONMENT:-development}
+      ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY}
     ports:
       - "8000:8000"
     depends_on:

@@ -23,15 +23,15 @@ class Settings(BaseSettings):
     spotify_token_url: str = "https://accounts.spotify.com/api/token"
     spotify_api_base: str = "https://api.spotify.com/v1"
 
-    # Spotify scopes — expanded to include personal library access
+    # Spotify scopes
     spotify_scopes: str = (
         "user-read-private "
         "user-read-email "
-        "user-library-read "        # GET /me/tracks (liked songs)
-        "playlist-read-private "    # GET /me/playlists + playlist items
-        "playlist-read-collaborative "  # Collaborative playlists
-        "user-top-read "            # GET /me/top/artists + /me/top/tracks
-        "user-follow-read "         # GET /me/following (followed artists)
+        "user-library-read "
+        "playlist-read-private "
+        "playlist-read-collaborative "
+        "user-top-read "
+        "user-follow-read "
         "streaming "
         "user-read-playback-state "
         "user-modify-playback-state"
@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # JWT
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
+
+    # Anthropic — used for mood parsing in arc generation
+    anthropic_api_key: str = ""
 
     class Config:
         env_file = ".env"

@@ -126,8 +126,16 @@ def upsert_track(conn, track: dict, user_id: str, source: str):
         INSERT INTO tracks (id, name, artist_names, album_name, duration_ms, preview_url, popularity)
         VALUES (:id, :name, :artists, :album, :duration_ms, :preview_url, :popularity)
         ON CONFLICT (id) DO UPDATE SET
-            popularity  = EXCLUDED.popularity,
-            preview_url = EXCLUDED.preview_url
+            popularity   = EXCLUDED.popularity,
+            preview_url  = EXCLUDED.preview_url,
+            name         = CASE WHEN tracks.name = '' OR tracks.name IS NULL
+                                THEN EXCLUDED.name ELSE tracks.name END,
+            artist_names = CASE WHEN tracks.artist_names = '' OR tracks.artist_names IS NULL
+                                THEN EXCLUDED.artist_names ELSE tracks.artist_names END,
+            album_name   = CASE WHEN tracks.album_name = '' OR tracks.album_name IS NULL
+                                THEN EXCLUDED.album_name ELSE tracks.album_name END,
+            duration_ms  = CASE WHEN tracks.duration_ms IS NULL
+                                THEN EXCLUDED.duration_ms ELSE tracks.duration_ms END
     """), {
         "id":          tid,
         "name":        track["name"][:500],
