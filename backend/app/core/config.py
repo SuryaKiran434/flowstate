@@ -23,12 +23,15 @@ class Settings(BaseSettings):
     spotify_token_url: str = "https://accounts.spotify.com/api/token"
     spotify_api_base: str = "https://api.spotify.com/v1"
 
-    # Spotify scopes needed
+    # Spotify scopes — expanded to include personal library access
     spotify_scopes: str = (
         "user-read-private "
         "user-read-email "
-        "user-library-read "
-        "playlist-read-private "
+        "user-library-read "        # GET /me/tracks (liked songs)
+        "playlist-read-private "    # GET /me/playlists + playlist items
+        "playlist-read-collaborative "  # Collaborative playlists
+        "user-top-read "            # GET /me/top/artists + /me/top/tracks
+        "user-follow-read "         # GET /me/following (followed artists)
         "streaming "
         "user-read-playback-state "
         "user-modify-playback-state"
