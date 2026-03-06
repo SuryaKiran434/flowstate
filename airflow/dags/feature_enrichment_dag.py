@@ -485,20 +485,206 @@ def log_pipeline_run(**context):
         mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
         mlflow.set_experiment("feature_enrichment_pipeline")
 
-        total_tracks      = context["ti"].xcom_pull(key="total_tracks",      task_ids="seed_tracks_from_library") or 0
-        features_enriched = context["ti"].xcom_pull(key="features_enriched", task_ids="extract_audio_features") or 0
+        total_tracks        = context["ti"].xcom_pull(key="total_tracks",         task_ids="seed_tracks_from_library") or 0
+        features_enriched   = context["ti"].xcom_pull(key="features_enriched",   task_ids="extract_audio_features") or 0
+        emotions_classified = context["ti"].xcom_pull(key="emotions_classified",  task_ids="classify_emotions") or 0
+        emotion_dist        = context["ti"].xcom_pull(key="emotion_distribution",  task_ids="classify_emotions") or {}
 
         with mlflow.start_run(run_name=f"pipeline_{context['ds']}"):
-            mlflow.log_metric("tracks_seeded",     total_tracks)
-            mlflow.log_metric("features_enriched", features_enriched)
-            mlflow.log_param("seed_source",        "personal_library")
-            mlflow.log_param("audio_source",       "yt-dlp")
-            mlflow.log_param("feature_extractor",  "librosa")
-            mlflow.log_param("execution_date",     context["ds"])
+            mlflow.log_metric("tracks_seeded",      total_tracks)
+            mlflow.log_metric("features_enriched",  features_enriched)
+            mlflow.log_metric("emotions_classified", emotions_classified)
+            mlflow.log_param("seed_source",         "personal_library")
+            mlflow.log_param("audio_source",        "yt-dlp")
+            mlflow.log_param("feature_extractor",   "librosa")
+            mlflow.log_param("emotion_classifier",  "percentile_rule_based")
+            mlflow.log_param("execution_date",      context["ds"])
+            for label, count in emotion_dist.items():
+                mlflow.log_metric(f"emotion_{label}", count)
 
-        print(f"✅ MLflow logged: {total_tracks} tracks seeded, {features_enriched} features extracted")
+        print(f"✅ MLflow logged: {total_tracks} seeded, {features_enriched} features, {emotions_classified} emotions")
     except Exception as e:
         print(f"MLflow logging skipped: {e}")
+
+
+# ─── Task 4: Classify Emotions ───────────────────────────────────────────────
+
+def classify_emotions(**context):
+    """
+    Maps each track's 42-dim librosa feature vector to 4 emotion fields:
+      - energy      (0.0–1.0)  derived from rms_energy + tempo
+      - valence     (0.0–1.0)  derived from spectral_centroid + chroma variance
+      - emotion_label          one of 12 labels matching the arc planner graph
+      - emotion_confidence     0.0–1.0, how strongly the track fits its label
+
+    Uses percentile-based normalization within the user's own library so that
+    emotion labels are always well-distributed regardless of library genre mix.
+    A library of all calm Telugu melodies will still have "energetic" tracks —
+    they're just the most energetic relative to that library.
+
+    Idempotent: only processes tracks where emotion_label IS NULL.
+    Re-runs safely after new tracks are added.
+    """
+    import os
+    import json
+    import numpy as np
+    from sqlalchemy import create_engine, text
+
+    DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://flowstate:flowstate_dev@db:5432/flowstate")
+    engine = create_engine(DATABASE_URL)
+
+    # ── Step 1: Load all tracks that have features but no emotion label ───────
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                tf.track_id,
+                tf.rms_energy,
+                tf.tempo_librosa,
+                tf.spectral_centroid,
+                tf.zero_crossing_rate,
+                tf.chroma_mean,
+                tf.mfcc_mean
+            FROM track_features tf
+            WHERE tf.rms_energy IS NOT NULL
+              AND tf.emotion_label IS NULL
+        """)).fetchall()
+
+    if not rows:
+        print("No tracks needing emotion classification — all up to date.")
+        return 0
+
+    print(f"Classifying emotions for {len(rows)} tracks...")
+
+    # ── Step 2: Build raw feature arrays ─────────────────────────────────────
+    track_ids        = [r.track_id for r in rows]
+    rms_values       = np.array([r.rms_energy or 0.0    for r in rows])
+    tempo_values     = np.array([r.tempo_librosa or 0.0 for r in rows])
+    centroid_values  = np.array([r.spectral_centroid or 0.0 for r in rows])
+    zcr_values       = np.array([r.zero_crossing_rate or 0.0 for r in rows])
+
+    # Chroma variance — higher = more harmonic richness / tonal complexity
+    # JSONB columns come back from PostgreSQL as Python lists already — no json.loads needed
+    chroma_variances = np.array([
+        float(np.var(r.chroma_mean)) if r.chroma_mean else 0.0
+        for r in rows
+    ])
+
+    # MFCC[1] — second coefficient correlates with tonal brightness
+    mfcc1_values = np.array([
+        float(r.mfcc_mean[1]) if r.mfcc_mean else 0.0
+        for r in rows
+    ])
+
+    # ── Step 3: Percentile-normalize within this library ─────────────────────
+    # Each feature is ranked 0.0–1.0 relative to the full library.
+    # This ensures emotion labels spread across all 12 categories
+    # regardless of genre (a calm library still has its "energetic" tracks).
+    def percentile_normalize(arr: np.ndarray) -> np.ndarray:
+        """Rank-based normalization → 0.0 to 1.0."""
+        if arr.max() == arr.min():
+            return np.full_like(arr, 0.5, dtype=float)
+        ranks = arr.argsort().argsort().astype(float)
+        return ranks / (len(ranks) - 1)
+
+    rms_norm      = percentile_normalize(rms_values)
+    tempo_norm    = percentile_normalize(tempo_values)
+    centroid_norm = percentile_normalize(centroid_values)
+    zcr_norm      = percentile_normalize(zcr_values)
+    chroma_norm   = percentile_normalize(chroma_variances)
+    mfcc1_norm    = percentile_normalize(mfcc1_values)
+
+    # ── Step 4: Derive energy + valence scores ────────────────────────────────
+    # energy:  weighted combo of loudness (rms), speed (tempo), percussiveness (zcr)
+    # valence: weighted combo of brightness (centroid), harmonic richness (chroma),
+    #          tonal warmth (mfcc1 — higher = brighter/more positive sounding)
+    energy  = 0.45 * rms_norm  + 0.35 * tempo_norm  + 0.20 * zcr_norm
+    valence = 0.40 * centroid_norm + 0.35 * chroma_norm + 0.25 * mfcc1_norm
+
+    # Re-normalize composite scores to 0–1
+    energy  = percentile_normalize(energy)
+    valence = percentile_normalize(valence)
+
+    # ── Step 5: Map (energy, valence) → emotion label ────────────────────────
+    # 2D grid matching arc planner's energy_centers and valence intuition.
+    # Each bucket: (energy_min, energy_max, valence_min, valence_max) → label
+    # Buckets are ordered by specificity — more specific rules first.
+    EMOTION_BUCKETS = [
+        # energy  range    valence range    label
+        (0.75, 1.00,  0.60, 1.00,  "euphoric"),
+        (0.75, 1.00,  0.35, 0.60,  "energetic"),
+        (0.75, 1.00,  0.00, 0.35,  "tense"),
+        (0.55, 0.75,  0.60, 1.00,  "happy"),
+        (0.55, 0.75,  0.35, 0.65,  "focused"),
+        (0.55, 0.75,  0.00, 0.35,  "angry"),
+        (0.30, 0.55,  0.55, 1.00,  "romantic"),
+        (0.30, 0.55,  0.35, 0.55,  "neutral"),
+        (0.30, 0.55,  0.00, 0.35,  "nostalgic"),
+        (0.00, 0.30,  0.45, 1.00,  "peaceful"),
+        (0.00, 0.30,  0.20, 0.45,  "melancholic"),
+        (0.00, 0.30,  0.00, 0.20,  "sad"),
+    ]
+
+    def assign_emotion(e: float, v: float) -> tuple[str, float]:
+        """
+        Returns (label, confidence).
+        Confidence = how centered the track is within its bucket (0.5–1.0).
+        Tracks near bucket boundaries get lower confidence — arc planner uses
+        these as bridge tracks between emotion segments.
+        """
+        for e_min, e_max, v_min, v_max, label in EMOTION_BUCKETS:
+            if e_min <= e <= e_max and v_min <= v <= v_max:
+                # Distance from bucket center → confidence
+                e_center = (e_min + e_max) / 2
+                v_center = (v_min + v_max) / 2
+                e_range  = (e_max - e_min) / 2
+                v_range  = (v_max - v_min) / 2
+                e_dist   = abs(e - e_center) / e_range
+                v_dist   = abs(v - v_center) / v_range
+                confidence = round(1.0 - 0.5 * (e_dist + v_dist) / 2, 3)
+                return label, max(0.5, confidence)
+        # Fallback — shouldn't happen with full coverage buckets
+        return "neutral", 0.5
+
+    # ── Step 6: Write to DB ───────────────────────────────────────────────────
+    total_classified = 0
+    label_counts: dict[str, int] = {}
+
+    with engine.begin() as conn:
+        for i, track_id in enumerate(track_ids):
+            e = float(energy[i])
+            v = float(valence[i])
+            label, confidence = assign_emotion(e, v)
+
+            conn.execute(text("""
+                UPDATE track_features SET
+                    energy           = :energy,
+                    valence          = :valence,
+                    emotion_label    = :label,
+                    emotion_confidence = :confidence,
+                    updated_at       = now()
+                WHERE track_id = :track_id
+            """), {
+                "energy":     round(e, 4),
+                "valence":    round(v, 4),
+                "label":      label,
+                "confidence": confidence,
+                "track_id":   track_id,
+            })
+
+            label_counts[label] = label_counts.get(label, 0) + 1
+            total_classified += 1
+
+    # ── Step 7: Report distribution ──────────────────────────────────────────
+    print(f"\n📊 Emotion classification complete — {total_classified} tracks classified")
+    print("\n  Label distribution:")
+    for label, count in sorted(label_counts.items(), key=lambda x: -x[1]):
+        bar = "█" * (count // 3)
+        pct = round(count / total_classified * 100, 1)
+        print(f"    {label:<14} {count:>4}  {pct:>5}%  {bar}")
+
+    context["ti"].xcom_push(key="emotions_classified", value=total_classified)
+    context["ti"].xcom_push(key="emotion_distribution", value=label_counts)
+    return total_classified
 
 
 # ─── DAG Task Graph ───────────────────────────────────────────────────────────
@@ -515,10 +701,16 @@ t2_features = PythonOperator(
     dag=dag,
 )
 
-t3_log = PythonOperator(
+t3_emotions = PythonOperator(
+    task_id="classify_emotions",
+    python_callable=classify_emotions,
+    dag=dag,
+)
+
+t4_log = PythonOperator(
     task_id="log_pipeline_run",
     python_callable=log_pipeline_run,
     dag=dag,
 )
 
-t1_seed >> t2_features >> t3_log
+t1_seed >> t2_features >> t3_emotions >> t4_log
