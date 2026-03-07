@@ -1,3 +1,4 @@
+import re
 """
 Feature Enrichment DAG — Flowstate
 ------------------------------------
@@ -785,25 +786,134 @@ def classify_emotions(**context):
     "young tapz", "yugendran vasudeva nair",
     }
 
-    def detect_region(artist_names_str: str) -> str:
-        """Returns 'indian' or 'western' based on artist name matching."""
+    def detect_region(artist_names_str: str, conn=None) -> str:
+        """
+        Returns a region string: indian, korean, japanese, latin, arabic,
+        african, eastern_european, or western (catch-all for EN/EU artists).
+
+        Priority:
+          1. INDIAN_ARTISTS hardcoded set - zero I/O
+          2. Unicode script detection - non-Latin scripts
+          3. DB cache in artist_regions table
+          4. Claude API - classifies unknowns once, cached forever
+        """
+        import os, json, urllib.request
+
         if not artist_names_str:
             return "western"
 
         lower = artist_names_str.lower()
+
+        # 1. Hardcoded Indian set (fastest)
         for artist in INDIAN_ARTISTS:
             if artist in lower:
                 return "indian"
-        # Also detect Telugu/Tamil/Hindi script characters as fallback
-        for char in artist_names_str:
-            if '\u0C00' <= char <= '\u0C7F':  # Telugu unicode block
-                return "indian"
-            if '\u0900' <= char <= '\u097F':  # Devanagari (Hindi)
-                return "indian"
-            if '\u0B80' <= char <= '\u0BFF':  # Tamil
-                return "indian"
-        return "western"
 
+        # 2. Unicode script detection
+        SCRIPT_REGIONS = [
+            ("ఀ", "౿", "indian"),
+            ("ऀ", "ॿ", "indian"),
+            ("஀", "௿", "indian"),
+            ("ಀ", "೿", "indian"),
+            ("ഀ", "ൿ", "indian"),
+            ("가", "힣", "korean"),
+            ("぀", "ゟ", "japanese"),
+            ("゠", "ヿ", "japanese"),
+            ("؀", "ۿ", "arabic"),
+            ("Ѐ", "ӿ", "eastern_european"),
+        ]
+        for char in artist_names_str:
+            for lo, hi, region in SCRIPT_REGIONS:
+                if lo <= char <= hi:
+                    return region
+
+        if conn is None:
+            return "western"
+
+        # 3. DB cache
+        artists = [a.strip() for a in re.split(r"[,;]", artist_names_str) if a.strip()]
+        if not artists:
+            return "western"
+
+        unknown_artists = []
+        for artist in artists:
+            key = artist.lower().strip()
+            try:
+                row = conn.execute(
+                    text("SELECT region FROM artist_regions WHERE artist_key = :k"),
+                    {"k": key}
+                ).fetchone()
+                if row:
+                    if row.region != "western":
+                        return row.region
+                else:
+                    unknown_artists.append(artist)
+            except Exception:
+                unknown_artists.append(artist)
+
+        if not unknown_artists:
+            return "western"
+
+        # 4. Claude API for unknowns
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return "western"
+
+        artist_list = ", ".join(f'"{a}"' for a in unknown_artists[:10])
+        prompt = (
+            "For each music artist, identify their primary music origin region. "
+            "Use one of: indian, korean, japanese, latin, arabic, african, eastern_european, western. "
+            "western = English/European (US, UK, Australia, etc). "
+            "Reply ONLY as JSON mapping artist name to region. No markdown. "
+            f"Artists: {artist_list}"
+        )
+
+        claude_results = {}
+        try:
+            payload = json.dumps({
+                "model": "claude-haiku-4-5",
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content": prompt}]
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=payload,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                }
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            raw = data["content"][0]["text"].strip()
+            raw = re.sub(r"```json|```", "", raw).strip()
+            claude_results = json.loads(raw)
+        except Exception as e:
+            print(f"  [artist_regions] Claude API error: {e}")
+
+        VALID = {"indian","korean","japanese","latin","arabic","african","eastern_european","western"}
+        dominant = "western"
+        for artist in unknown_artists:
+            region = claude_results.get(artist, "western").lower().strip()
+            if region not in VALID:
+                region = "western"
+            key = artist.lower().strip()
+            try:
+                conn.execute(text("""
+                    INSERT INTO artist_regions (artist_key, artist_name, region, source)
+                    VALUES (:k, :n, :r, 'claude')
+                    ON CONFLICT (artist_key) DO UPDATE SET
+                        region = EXCLUDED.region, source = EXCLUDED.source, updated_at = NOW()
+                """), {"k": key, "n": artist, "r": region})
+                conn.commit()
+                print(f"  [artist_regions] {artist!r} -> {region}")
+            except Exception as e:
+                print(f"  [artist_regions] Cache error {artist!r}: {e}")
+            if region != "western":
+                dominant = region
+
+        return dominant
     # ── Step 1: Load tracks with features but no emotion label ───────────────
     with engine.connect() as conn:
         rows = conn.execute(text("""
@@ -829,7 +939,7 @@ def classify_emotions(**context):
     print(f"Classifying emotions for {len(rows)} tracks...")
 
     # ── Step 2: Split into regional buckets ──────────────────────────────────
-    regions = [detect_region(r.artist_names or "") for r in rows]
+    regions = [detect_region(r.artist_names or "", conn=conn) for r in rows]
     indian_idx  = [i for i, r in enumerate(regions) if r == "indian"]
     western_idx = [i for i, r in enumerate(regions) if r == "western"]
 
