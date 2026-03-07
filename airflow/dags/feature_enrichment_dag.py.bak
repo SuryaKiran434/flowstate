@@ -519,21 +519,19 @@ def log_pipeline_run(**context):
 
 def classify_emotions(**context):
     """
-    V2 — Region-aware emotion classifier.
+    Maps each track's 42-dim librosa feature vector to 4 emotion fields:
+      - energy      (0.0–1.0)  derived from rms_energy + tempo
+      - valence     (0.0–1.0)  derived from spectral_centroid + chroma variance
+      - emotion_label          one of 12 labels matching the arc planner graph
+      - emotion_confidence     0.0–1.0, how strongly the track fits its label
 
-    Key improvement over V1:
-    - Detects music region (indian / western) from artist_names
-    - Normalizes percentiles WITHIN each region separately
-    - Indian film music composers/artists have a dedicated lookup set
-    - Prevents cross-contamination: a soft AR Rahman ballad won't be
-      labelled "energetic" just because it's louder than other Indian tracks
-      when compared globally against Western EDM
+    Uses percentile-based normalization within the user's own library so that
+    emotion labels are always well-distributed regardless of library genre mix.
+    A library of all calm Telugu melodies will still have "energetic" tracks —
+    they're just the most energetic relative to that library.
 
-    Additional improvements:
-    - Valence formula adjusted: chroma_variance weighted higher for Indian
-      music (raga-based harmony shows up strongly in chroma)
-    - Confidence scoring unchanged
-    - Idempotent: only processes tracks with emotion_label IS NULL
+    Idempotent: only processes tracks where emotion_label IS NULL.
+    Re-runs safely after new tracks are added.
     """
     import os
     import json
@@ -543,265 +541,7 @@ def classify_emotions(**context):
     DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://flowstate:flowstate_dev@db:5432/flowstate")
     engine = create_engine(DATABASE_URL)
 
-    # ── Indian music artist/composer detection set ────────────────────────────
-    # Covers major South Indian (Telugu, Tamil, Kannada, Malayalam) + Hindi
-    # composers, playback singers, and music directors.
-    # Add more names here as needed — matching is case-insensitive substring.
-    INDIAN_ARTISTS = {
-    # ── Legendary playback singers ──────────────────────────────────────────
-    "s. p. balasubrahmanyam", "s.p. balasubrahmanyam", "sp balasubrahmanyam",
-    "s. janaki", "s.janaki", "s. p. sailaja", "s.p. sailaja",
-    "p. susheela", "p.susheela", "k. j. yesudas", "k.j. yesudas",
-    "vani jairam", "ghantasala", "s. sowmya", "swarnalatha",
-    "udit narayan", "kumar sanu", "alka yagnik", "kavitha krishnamurthy",
-    "k. s. chithra", "k.s. chithra", "k. s. harisankar",
-    "unnikrishnan", "unni menon", "p. jayachandran",
-    "bombay jayashri", "vasundhara das", "nithya menen",
-
-    # ── South Indian composers ───────────────────────────────────────────────
-    "a.r. rahman", "ar rahman", "ilaiyaraaja", "harris jayaraj",
-    "yuvan shankar raja", "devi sri prasad", "dsp", "thaman s", "thaman",
-    "anirudh ravichander", "anirudh", "sai karthik", "govind vasantha",
-    "mickey j. meyer", "anup rubens", "vivek sagar", "jakes bejoy",
-    "gopi sundar", "shaan rahman", "hesham abdul wahab",
-    "g. v. prakash", "gv prakash", "g.v. prakash",
-    "m. m. keeravaani", "m.m. keeravaani", "keeravani", "mm keeravaani",
-    "mani sharma", "dhibu ninan thomas", "vishal chandrashekhar",
-    "justin prabhakaran", "santhosh narayanan", "vivek - mervin",
-    "sean roldan", "sam c.s.", "radhan", "ravi basrur",
-    "praveen lakkaraju", "pravin lakkaraju", "shakthikanth karthick",
-    "sushin shyam", "bijibal", "sunny m.r.", "sid sriram",
-    "vijai bulganin", "vijay vijay", "vishnu vijay", "hip hop tamizha",
-    "hiphop tamizha", "nivas k prasanna", "chaitan bharadwaj",
-    "siddharth vipin", "vinayak sasikumar", "anand aravindakshan",
-
-    # ── Hindi film composers ─────────────────────────────────────────────────
-    "pritam", "amit trivedi", "vishal-shekhar", "vishal shekhar",
-    "shankar-ehsaan-loy", "shankar ehsaan loy", "shankar mahadevan",
-    "sachin-jigar", "sachin jigar", "ajay-atul", "ajay atul",
-    "mithoon", "salim-sulaiman", "salim sulaiman", "jatin-lalit",
-    "himesh reshammiya", "bappi lahiri", "r. d. burman", "rd burman",
-    "tanishk bagchi", "rochak kohli", "lijo george-dj chetas",
-    "sanjay leela bhansali", "shashwat sachdev", "siddharth-garima",
-    "siddharth - garima", "meet bros", "meet bros anjjan",
-    "chirantan bhatt", "lalit sen", "sandeep chowta",
-    "sandeep nath", "sachet-parampara", "sachet parampara",
-    "varun jain", "ritviz", "lost stories",
-
-    # ── South Indian playback singers ────────────────────────────────────────
-    "haricharan", "karthik", "chinmayi", "shreya ghoshal",
-    "sid sriram", "vijay prakash", "naresh iyer", "mahalakshmi iyer",
-    "sadhana sargam", "hariharan", "kk", "sonu nigam", "sunidhi chauhan",
-    "shaan", "udit narayan", "hemachandra vedala", "anurag kulkarni",
-    "rahul nambiar", "benny dayal", "jonita Gandhi", "jonita gandhi",
-    "shweta mohan", "saindhavi", "nithyashree mahadevan",
-    "bombay jayashri", "tippu", "velvet voice karthik",
-    "srinidhi", "sithara krishnakumar", "sivaangi krishnakumar",
-    "madhuvanthi narayan", "haripriya", "padmalatha",
-    "anjana sowmya", "gopika poornima", "geetha madhuri",
-    "ramya behara", "sahithi", "sahithi chaganti", "sravana bhargavi",
-    "nutana mohan", "sunitha", "sunitha sarathy", "sweekar", "sweekar agasthi",
-    "ranina reddy", "manisha eerabathini", "satya yamini",
-    "nakash aziz", "shashaa tirupati", "armaan malik",
-
-    # ── Telugu/Tamil lyricists & supporting artists ──────────────────────────
-    "anantha sriram", "blaaze", "kittu vissapragada", "adk",
-    "sirivennela seetharama sastry", "ramajogayya sastry",
-    "vennelakanti", "bhuvana chandra", "bhaskarabhatla", "kasarla shyam",
-    "veturi", "veturi sundararama murthy", "chandra bose", "srimani",
-    "madhan karky", "arunraja kamaraj", "hriday gattani",
-    "devan ekambaram", "irshad kamil", "prasoon joshi",
-    "kumaar", "swanand kirkire", "amitabh bhattacharya",
-    "kausar munir", "manoj muntashir", "jaideep sahni",
-    "anvita dutt", "sayeed quadri", "kunaal vermaa",
-
-    # ── Hindi playback singers ───────────────────────────────────────────────
-    "arijit singh", "jubin nautiyal", "mohit chauhan", "javed ali",
-    "atif aslam", "rahat fateh ali khan", "nusrat fateh ali khan",
-    "shafqat amanat ali", "ali sethi", "sonu nigam", "mika singh",
-    "neha kakkar", "tulsi kumar", "palak muchhal", "shreya ghoshal",
-    "sunidhi chauhan", "alka yagnik", "asha bhosle", "lata mangeshkar",
-    "harshdeep kaur", "nooran sisters", "neeti mohan", "jasleen royal",
-    "shilpa rao", "jonita gandhi", "antara mitra", "monali thakur",
-    "shweta pandit", "asees kaur", "dhvani bhanushali", "payal dev",
-    "b praak", "kanika kapoor", "vishal mishra", "stebin ben",
-    "darshan raval", "guru randhawa", "badshah", "yo yo honey singh",
-    "diljit dosanjh", "ammy virk", "ap dhillon", "karan sehmbi",
-    "maninder buttar", "pav dharia", "jazadin", "jaz dhami",
-
-    # ── Regional/indie Indian artists ────────────────────────────────────────
-    "sai abhyankkar", "mitraz", "ritviz", "prateek kuhad",
-    "vidya vox", "rahul sipligunj", "kala bhairava",
-    "ranjith govind", "ranjith", "ram miriyala", "dhanush",
-    "sivakarthikeyan", "silambarasan tr", "vijay", "kamal haasan",
-    "dulquer salmaan", "nazriya nazim", "mammootty",
-    "vishal dadlani", "shankar mahadevan", "salman khan",
-    "ayushmann khurrana", "nakul", "sanjith hegde",
-    "nikhil d'souza", "nikhil paul george", "kunal ganjawala",
-    "roop kumar rathod", "nakash aziz", "sanah moidutty",
-    "manu manjith", "sujatha", "mano", "s.p. charan", "sp charan",
-    "malaysia vasudevan", "k. s. harisankar", "vijay yesudas",
-    "hesham abdul wahab", "sithara krishnakumar",
-    "mukesh", "kishore kumar", "mohammed rafi", "hemant kumar",
-
-    # ── Composers/artists with single names ─────────────────────────────────
-    "brodha v", "raftaar", "divine", "naezy", "mc stan",
-    "mc mushti", "hiphop tamizha", "arivu", "dabzee",
-    "asal kolaar", "mugen rao", "dhanush", "yuvan",
-    "ganga", "andal", "chitra", "mano", "tippu",
-    "sujatha", "harini", "charulatha", "padma", "usha",
-    "savithri", "smitha", "malathi", "deepa", "divya",
-    "renuka", "sridevi", "gayatri", "radhan",
-
-    # ── Specific artists from your DB ────────────────────────────────────────
-    "vishal chandrashekhar", "s.p. charan", "krishna kanth",
-    "david simon", "anitha", "ranjith govind", "nakash aziz",
-    "sanah moidutty", "sai abhyankkar", "paal dabba", "bhumi",
-    "deepthi suresh", "yugendran vasudeva nair", "inno genga",
-    "malaysia vasudevan", "vijay", "asal kolaar", "vishnu edavan",
-    "alka yagnik", "karan sehmbi", "goldboy", "sameera bharadwaj",
-    "giulio cercato",  # <- likely indian fusion
-    "kala bhairava", "ram miriyala", "rahul nambiar",
-    "ilaiyaraaja", "charulatha mani", "hariharan",
-    "sumangaly", "balaji", "adnan sami", "nithya menen",
-    "u.v.jackey", "anup rubens", "vivek", "nadeesh",
-    "suzanne d'mello", "hriday gattani", "devan ekambaram",
-    "anantha sriram", "kittu vissapragada", "adk",
-    "srinivasa mouli", "gowtham bharadwaj", "aalaap raju",
-    "aashir wajahat", "aastha gill", "aavani malhar",
-    "abhay jodhpurkar", "abhijay sharma", "abhijeet",
-    "abhijit vaghani", "adithi singh sharma", "aditi shankar",
-    "aditya rikhari", "ajaey shravan", "aishwarya majmudar",
-    "ajay-atul", "akhil", "altamash faridi", "alyssa mendonsa",
-    "anand bhaskar", "ananya bhat", "anjana sowmya",
-    "ankit menon", "ankit tiwari", "annural khalid",
-    "anthony daasan", "anudeep dev", "anuj gurwara",
-    "anumita nadesan", "anupam amod", "aravindh sankar",
-    "arivu", "arun", "arun chiluveru", "arunraja kamaraj",
-    "asees kaur", "asena", "avvy sra", "ayyan pranathi",
-    "badshah", "baman", "bela shende", "bellie raj",
-    "benny dayal", "bhadra rajin", "bhaskarabhatla",
-    "bheems ceciroleo", "bhumi", "bhuvana chandra",
-    "bilal saeed", "bindu mahima", "bobby-imran",
-    "caralisa monteiro", "chaitan bharadwaj", "chaitanya prasad",
-    "chamath sangeeth", "chet singh", "chinna ponnu",
-    "chirantan bhatt", "chorus", "darshana rajendran",
-    "darshan raval", "d.burn", "deva", "dhanunjay seepana",
-    "dhee", "dhvani bhanushali", "diljit dosanjh", "dilushselva",
-    "divya kumar", "dj exe", "dulquer salmaan",
-    "emcee jesz", "ganga", "gautham vasudev menon", "gayatri",
-    "geetha madhuri", "ghantasala", "gopika poornima",
-    "gowtham bharadwaj", "g sahithi", "gurinder gill",
-    "gurnazar", "gurpreet saini", "haarika narayan",
-    "haji springer", "hansika", "harini", "harini ivaturi",
-    "haripriya", "harish raghavendra", "harrdy sandhu",
-    "hesham abdul wahab", "hiphop tamizha",
-    "ip singh", "jaani", "jadu jadu", "jai dhir",
-    "jaspreet", "jaspreet jasz", "jassie gift", "jay krish",
-    "jeans srinivas", "jigar saraiya", "jonita gandhi",
-    "jr. ntr", "jyothsna", "jyotica tangri",
-    "kailash kher", "kalai mk", "kalpana patowary",
-    "kalyani nair", "kamalakar", "kanika kapoor",
-    "kapil", "kapilan kugavel", "karunya", "kasarla shyam",
-    "kausar munir", "kaushik krish", "keerthana sharma",
-    "keerthi sagathia", "khushi murali", "kiddo", "kid sathya",
-    "kiran kamath", "kranthi sekhar", "krish", "krishh",
-    "krishna chaitanya", "krishna chithanya", "krishnakali saha",
-    "krishna kanth", "krisshh", "kshitij patwardhan",
-    "ku karthik", "kunal ganjawala", "kutle khan",
-    "kushi murali", "l. v. revanth", "maanu",
-    "madhusree", "mahathi", "mahati swara sagar",
-    "malathi", "malavika", "malvi sundaresan",
-    "mamta mohandas", "maninder buttar", "mani sharma",
-    "manj musik", "mano", "marian hill", "mathan",
-    "mathangi", "mc mushti", "m. d. rajendran",
-    "mellen gi", "mervin solomon", "ml gayatri",
-    "m.m.manasi", "mm sreelekha", "mohana",
-    "mohana bhogaraju", "mohan rajan", "momina mustehsan",
-    "mugen rao", "murali", "muralidhar",
-    "naga saihithi", "nakul", "narendra",
-    "naresh ayar", "naveen", "naveen madhav",
-    "naven", "navin raaj mathavan", "nayana nair",
-    "nazriya nazim", "neeti mohan", "nehaal naseem",
-    "neha bhasin", "nikhil d'souza", "nikhil paul george",
-    "nikhita gandhi", "nikita nigam", "nupoor khedkar",
-    "nutana mohan", "oaff", "paal dabba", "padma",
-    "padmalatha", "parampara tandon", "parampara thakur",
-    "pawni pandey", "peddapalli rohith", "pradeep kumar",
-    "pradeep ranganathan", "pranavi", "pranavi acharya",
-    "prasanna.r", "prasanthini", "prashan sean",
-    "prashanthini", "pravin saivi", "priya mali",
-    "priya prakash", "priya saraiya", "prudhvi chandra",
-    "p s jayhari", "purnachary", "raaban", "raghav",
-    "ragini tandan", "raja hasan", "rajat nagpal",
-    "raj ranjodh", "raj thillaiyampalam",
-    "saraswati putra ramajogayya sastry", "ramcharan",
-    "ram pothineni", "ramya nsk", "ranina reddy",
-    "ranji", "ranjith", "rashid ali", "rashmeet kaur",
-    "riar saab", "ritviz", "r maalavika manoj",
-    "rohit gopalakrishnan", "roisee", "rokesh",
-    "roop kumar rathod", "roshini jkv", "roshni baptist",
-    "rzee", "sachin sanghvi", "sagar", "sagar desai",
-    "sahiti", "saindhavi", "saint t.f.c.", "sai smriti",
-    "saketh komanduri", "saketh naidu", "sanjana",
-    "sanapati bharadwaj patrudu", "sandeep nath",
-    "sandilya pisapati", "sanjith hegde", "sankar sharma",
-    "santosh.g", "satheeshan", "sathya.c", "sathyaprakash",
-    "satya", "savera", "savithri", "scammacist",
-    "sdm nation", "shaan", "shadab faridi", "shae gill",
-    "shahil hada", "shakthisree gopalan", "sharan",
-    "shashwat singh", "shefali alvares", "shekar chandra",
-    "shekhar ravjiani", "shivani", "shree mani",
-    "shreshta", "shruthika samudhrala", "shruti pathak",
-    "shweta pandit", "siddharth", "siddharth - garima",
-    "siddhu kumar", "silambarasan tr", "silvia anisha",
-    "simran choudhary", "sinduri vishal",
-    "sirivennela seetharama sastry", "sivaraman",
-    "smitha", "sniggy", "sofia carson",
-    "spoorthi jithender", "sravana bhargavi", "sravani",
-    "srikanth addala", "sri krishna", "sri madhumitha",
-    "srinidhi", "srinisha jayaseelan", "srinivas",
-    "srinivasa mouli", "sri vasanth", "sruthi ml",
-    "sruthi ranjani", "stebin ben", "sublahshini",
-    "suchithra karthik kumar", "suchith santoshan",
-    "suchith suresan", "suchitra", "suchit suresan",
-    "sudarshan ashok", "sudharshan ashok", "suhail koya",
-    "sukh-e muzical doctorz", "sukhwinder singh",
-    "sumangaly", "sunitha", "sunitha sarathy",
-    "super subu", "suraj", "surendra krishna",
-    "swanand kirkire", "sweetaj brar", "swetha pandit",
-    "teja", "the doorbeen", "the indian choral ensemble",
-    "the prophec", "tippu", "tony kakkar", "tulsi kumar",
-    "uma neha", "usha", "u.v.jackey",
-    "vaishali samant", "varun jain", "varun parandhaman",
-    "vedan", "ved sharma", "vennelakanti", "venu srirangam",
-    "veturi", "veturi sundararama murthy", "vignesh ramakrishna",
-    "vigz", "vimal roy", "vinayak sasikumar",
-    "vinod yajamanya", "vishnupriya ravi",
-    "vv prassanna", "yazin", "yohani", "young desi",
-    "young tapz", "yugendran vasudeva nair",
-    }
-
-    def detect_region(artist_names_str: str) -> str:
-        """Returns 'indian' or 'western' based on artist name matching."""
-        if not artist_names_str:
-            return "western"
-
-        lower = artist_names_str.lower()
-        for artist in INDIAN_ARTISTS:
-            if artist in lower:
-                return "indian"
-        # Also detect Telugu/Tamil/Hindi script characters as fallback
-        for char in artist_names_str:
-            if '\u0C00' <= char <= '\u0C7F':  # Telugu unicode block
-                return "indian"
-            if '\u0900' <= char <= '\u097F':  # Devanagari (Hindi)
-                return "indian"
-            if '\u0B80' <= char <= '\u0BFF':  # Tamil
-                return "indian"
-        return "western"
-
-    # ── Step 1: Load tracks with features but no emotion label ───────────────
+    # ── Step 1: Load all tracks that have features but no emotion label ───────
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT
@@ -811,10 +551,8 @@ def classify_emotions(**context):
                 tf.spectral_centroid,
                 tf.zero_crossing_rate,
                 tf.chroma_mean,
-                tf.mfcc_mean,
-                t.artist_names
+                tf.mfcc_mean
             FROM track_features tf
-            JOIN tracks t ON t.id = tf.track_id
             WHERE tf.rms_energy IS NOT NULL
               AND tf.emotion_label IS NULL
         """)).fetchall()
@@ -825,97 +563,61 @@ def classify_emotions(**context):
 
     print(f"Classifying emotions for {len(rows)} tracks...")
 
-    # ── Step 2: Split into regional buckets ──────────────────────────────────
-    regions = [detect_region(r.artist_names or "") for r in rows]
-    indian_idx  = [i for i, r in enumerate(regions) if r == "indian"]
-    western_idx = [i for i, r in enumerate(regions) if r == "western"]
+    # ── Step 2: Build raw feature arrays ─────────────────────────────────────
+    track_ids        = [r.track_id for r in rows]
+    rms_values       = np.array([r.rms_energy or 0.0    for r in rows])
+    tempo_values     = np.array([r.tempo_librosa or 0.0 for r in rows])
+    centroid_values  = np.array([r.spectral_centroid or 0.0 for r in rows])
+    zcr_values       = np.array([r.zero_crossing_rate or 0.0 for r in rows])
 
-    print(f"  Indian tracks: {len(indian_idx)} | Western tracks: {len(western_idx)}")
-
-    # ── Step 3: Extract raw feature arrays ───────────────────────────────────
-    track_ids       = [r.track_id for r in rows]
-    rms_values      = np.array([r.rms_energy or 0.0    for r in rows])
-    tempo_values    = np.array([r.tempo_librosa or 0.0 for r in rows])
-    centroid_values = np.array([r.spectral_centroid or 0.0 for r in rows])
-    zcr_values      = np.array([r.zero_crossing_rate or 0.0 for r in rows])
+    # Chroma variance — higher = more harmonic richness / tonal complexity
+    # JSONB columns come back from PostgreSQL as Python lists already — no json.loads needed
     chroma_variances = np.array([
         float(np.var(r.chroma_mean)) if r.chroma_mean else 0.0
         for r in rows
     ])
+
+    # MFCC[1] — second coefficient correlates with tonal brightness
     mfcc1_values = np.array([
         float(r.mfcc_mean[1]) if r.mfcc_mean else 0.0
         for r in rows
     ])
 
-    # ── Step 4: Percentile normalization ─────────────────────────────────────
+    # ── Step 3: Percentile-normalize within this library ─────────────────────
+    # Each feature is ranked 0.0–1.0 relative to the full library.
+    # This ensures emotion labels spread across all 12 categories
+    # regardless of genre (a calm library still has its "energetic" tracks).
     def percentile_normalize(arr: np.ndarray) -> np.ndarray:
-        if len(arr) == 0:
-            return arr
+        """Rank-based normalization → 0.0 to 1.0."""
         if arr.max() == arr.min():
             return np.full_like(arr, 0.5, dtype=float)
         ranks = arr.argsort().argsort().astype(float)
         return ranks / (len(ranks) - 1)
 
-    def normalize_by_region(values: np.ndarray, idx_list: list) -> np.ndarray:
-        """
-        Normalize values only within the given index subset.
-        Each region gets its own 0-1 scale so Indian tracks compare
-        against Indian tracks, Western against Western.
-        """
-        result = np.zeros(len(values))
-        if not idx_list:
-            return result
-        subset = values[idx_list]
-        normalized = percentile_normalize(subset)
-        for i, global_i in enumerate(idx_list):
-            result[global_i] = normalized[i]
-        return result
+    rms_norm      = percentile_normalize(rms_values)
+    tempo_norm    = percentile_normalize(tempo_values)
+    centroid_norm = percentile_normalize(centroid_values)
+    zcr_norm      = percentile_normalize(zcr_values)
+    chroma_norm   = percentile_normalize(chroma_variances)
+    mfcc1_norm    = percentile_normalize(mfcc1_values)
 
-    # Normalize each feature within its region
-    rms_norm      = np.zeros(len(rows))
-    tempo_norm    = np.zeros(len(rows))
-    centroid_norm = np.zeros(len(rows))
-    zcr_norm      = np.zeros(len(rows))
-    chroma_norm   = np.zeros(len(rows))
-    mfcc1_norm    = np.zeros(len(rows))
+    # ── Step 4: Derive energy + valence scores ────────────────────────────────
+    # energy:  weighted combo of loudness (rms), speed (tempo), percussiveness (zcr)
+    # valence: weighted combo of brightness (centroid), harmonic richness (chroma),
+    #          tonal warmth (mfcc1 — higher = brighter/more positive sounding)
+    energy  = 0.45 * rms_norm  + 0.35 * tempo_norm  + 0.20 * zcr_norm
+    valence = 0.40 * centroid_norm + 0.35 * chroma_norm + 0.25 * mfcc1_norm
 
-    for idx_group in [indian_idx, western_idx]:
-        if not idx_group:
-            continue
-        idx = idx_group
-        rms_norm[idx]      = normalize_by_region(rms_values,      idx)[idx]
-        tempo_norm[idx]    = normalize_by_region(tempo_values,     idx)[idx]
-        centroid_norm[idx] = normalize_by_region(centroid_values,  idx)[idx]
-        zcr_norm[idx]      = normalize_by_region(zcr_values,       idx)[idx]
-        chroma_norm[idx]   = normalize_by_region(chroma_variances, idx)[idx]
-        mfcc1_norm[idx]    = normalize_by_region(mfcc1_values,     idx)[idx]
+    # Re-normalize composite scores to 0–1
+    energy  = percentile_normalize(energy)
+    valence = percentile_normalize(valence)
 
-    # ── Step 5: Derive energy + valence ──────────────────────────────────────
-    # Indian music: chroma variance weighted higher (raga-based harmony)
-    # Western music: original weights preserved
-    energy  = np.zeros(len(rows))
-    valence = np.zeros(len(rows))
-
-    for i, region in enumerate(regions):
-        if region == "indian":
-            energy[i]  = 0.45 * rms_norm[i] + 0.35 * tempo_norm[i] + 0.20 * zcr_norm[i]
-            valence[i] = 0.30 * centroid_norm[i] + 0.45 * chroma_norm[i] + 0.25 * mfcc1_norm[i]
-        else:
-            energy[i]  = 0.45 * rms_norm[i] + 0.35 * tempo_norm[i] + 0.20 * zcr_norm[i]
-            valence[i] = 0.40 * centroid_norm[i] + 0.35 * chroma_norm[i] + 0.25 * mfcc1_norm[i]
-
-    # Re-normalize composites within each region
-    for idx_group in [indian_idx, western_idx]:
-        if not idx_group:
-            continue
-        idx = idx_group
-        e_sub = energy[idx]
-        v_sub = valence[idx]
-        energy[idx]  = percentile_normalize(e_sub)
-        valence[idx] = percentile_normalize(v_sub)
-
-    # ── Step 6: Emotion bucket mapping (unchanged) ────────────────────────────
+    # ── Step 5: Map (energy, valence) → emotion label ────────────────────────
+    # 2D grid matching arc planner's energy_centers and valence intuition.
+    # Each bucket: (energy_min, energy_max, valence_min, valence_max) → label
+    # Buckets are ordered by specificity — more specific rules first.
     EMOTION_BUCKETS = [
+        # energy  range    valence range    label
         (0.75, 1.00,  0.60, 1.00,  "euphoric"),
         (0.75, 1.00,  0.35, 0.60,  "energetic"),
         (0.75, 1.00,  0.00, 0.35,  "tense"),
@@ -931,8 +633,15 @@ def classify_emotions(**context):
     ]
 
     def assign_emotion(e: float, v: float) -> tuple[str, float]:
+        """
+        Returns (label, confidence).
+        Confidence = how centered the track is within its bucket (0.5–1.0).
+        Tracks near bucket boundaries get lower confidence — arc planner uses
+        these as bridge tracks between emotion segments.
+        """
         for e_min, e_max, v_min, v_max, label in EMOTION_BUCKETS:
             if e_min <= e <= e_max and v_min <= v <= v_max:
+                # Distance from bucket center → confidence
                 e_center = (e_min + e_max) / 2
                 v_center = (v_min + v_max) / 2
                 e_range  = (e_max - e_min) / 2
@@ -941,27 +650,26 @@ def classify_emotions(**context):
                 v_dist   = abs(v - v_center) / v_range
                 confidence = round(1.0 - 0.5 * (e_dist + v_dist) / 2, 3)
                 return label, max(0.5, confidence)
+        # Fallback — shouldn't happen with full coverage buckets
         return "neutral", 0.5
 
-    # ── Step 7: Write to DB ───────────────────────────────────────────────────
+    # ── Step 6: Write to DB ───────────────────────────────────────────────────
     total_classified = 0
     label_counts: dict[str, int] = {}
-    region_label_counts = {"indian": {}, "western": {}}
 
     with engine.begin() as conn:
         for i, track_id in enumerate(track_ids):
             e = float(energy[i])
             v = float(valence[i])
             label, confidence = assign_emotion(e, v)
-            region = regions[i]
 
             conn.execute(text("""
                 UPDATE track_features SET
-                    energy             = :energy,
-                    valence            = :valence,
-                    emotion_label      = :label,
+                    energy           = :energy,
+                    valence          = :valence,
+                    emotion_label    = :label,
                     emotion_confidence = :confidence,
-                    updated_at         = now()
+                    updated_at       = now()
                 WHERE track_id = :track_id
             """), {
                 "energy":     round(e, 4),
@@ -972,26 +680,20 @@ def classify_emotions(**context):
             })
 
             label_counts[label] = label_counts.get(label, 0) + 1
-            region_label_counts[region][label] = region_label_counts[region].get(label, 0) + 1
             total_classified += 1
 
-    # ── Step 8: Report ────────────────────────────────────────────────────────
-    print(f"\n📊 Emotion classification complete — {total_classified} tracks")
-
-    for region in ["indian", "western"]:
-        rcounts = region_label_counts[region]
-        if not rcounts:
-            continue
-        rtotal = sum(rcounts.values())
-        print(f"\n  {region.upper()} ({rtotal} tracks):")
-        for label, count in sorted(rcounts.items(), key=lambda x: -x[1]):
-            pct = round(count / rtotal * 100, 1)
-            bar = "█" * (count // 2)
-            print(f"    {label:<14} {count:>4}  {pct:>5}%  {bar}")
+    # ── Step 7: Report distribution ──────────────────────────────────────────
+    print(f"\n📊 Emotion classification complete — {total_classified} tracks classified")
+    print("\n  Label distribution:")
+    for label, count in sorted(label_counts.items(), key=lambda x: -x[1]):
+        bar = "█" * (count // 3)
+        pct = round(count / total_classified * 100, 1)
+        print(f"    {label:<14} {count:>4}  {pct:>5}%  {bar}")
 
     context["ti"].xcom_push(key="emotions_classified", value=total_classified)
     context["ti"].xcom_push(key="emotion_distribution", value=label_counts)
     return total_classified
+
 
 # ─── DAG Task Graph ───────────────────────────────────────────────────────────
 
