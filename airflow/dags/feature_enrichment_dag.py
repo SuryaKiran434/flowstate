@@ -417,6 +417,9 @@ def extract_audio_features(**context):
             rms_energy   = float(librosa.feature.rms(y=y).mean())
             tempo_arr, _ = librosa.beat.beat_track(y=y, sr=sr)
             tempo        = float(tempo_arr) if np.isscalar(tempo_arr) else float(tempo_arr[0])
+            # Clamp tempo to 60-160 BPM — librosa octave error doubles/halves real BPM
+            while tempo > 160: tempo /= 2
+            while tempo < 60:  tempo *= 2
 
             print(f"  Features extracted — tempo: {tempo:.1f} BPM, spectral_centroid: {spec_cent:.0f}, rms: {rms_energy:.4f}")
 

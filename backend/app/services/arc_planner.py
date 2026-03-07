@@ -1,3 +1,4 @@
+import random
 """
 Arc Planning Service — Flowstate
 ---------------------------------
@@ -118,6 +119,7 @@ class ArcPlanner:
             JOIN track_features tf ON t.id = tf.track_id
             WHERE ut.user_id = cast(:uid as uuid)
               AND tf.emotion_label IS NOT NULL
+            ORDER BY RANDOM()
         """), {"uid": user_id}).fetchall()
 
         return [
@@ -246,6 +248,7 @@ class ArcPlanner:
             t for t in track_pool
             if t.emotion_label == emotion and t.track_id not in used_track_ids
         ]
+        random.shuffle(candidates)
 
         # Fallback: borrow low-confidence tracks from adjacent emotions
         if len(candidates) < n_tracks:
@@ -257,14 +260,15 @@ class ArcPlanner:
                 and t.track_id not in used_track_ids
                 and t not in candidates
             ]
+            random.shuffle(fallback)
             candidates = candidates + fallback
 
         if energy_direction == "ascending":
-            candidates.sort(key=lambda t: t.energy)
+            candidates.sort(key=lambda t: t.energy + random.uniform(-0.08, 0.08))
         elif energy_direction == "descending":
-            candidates.sort(key=lambda t: t.energy, reverse=True)
+            candidates.sort(key=lambda t: t.energy + random.uniform(-0.08, 0.08), reverse=True)
         else:
-            candidates.sort(key=lambda t: t.emotion_confidence, reverse=True)
+            candidates.sort(key=lambda t: t.emotion_confidence + random.uniform(-0.08, 0.08), reverse=True)
 
         return candidates[:n_tracks]
 
