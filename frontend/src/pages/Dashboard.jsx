@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import SpotifyPlayer from '../components/SpotifyPlayer'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
@@ -303,15 +304,31 @@ function LoadingScreen({ moodText, waitTrack }) {
 }
 
 // ── Screen 4: Arc Result ──────────────────────────────────────────────────────
-function ArcResultScreen({ arc, onReset }) {
-  const [visible, setVisible]   = useState(false)
-  const [expanded, setExpanded] = useState(null)
+function ArcResultScreen({ arc, onReset, spotifyToken }) {
+  const [visible, setVisible]         = useState(false)
+  const [expanded, setExpanded]       = useState(null)
+  const [playingIndex, setPlayingIndex] = useState(null)
+  const playerRef                     = useRef(null)
   useEffect(() => { setTimeout(() => setVisible(true), 80) }, [])
 
   const totalMin = Math.round(arc.total_duration_ms / 60000)
 
+  // Build a map from (segmentIndex, trackIndex) → flat arc.tracks index
+  // so clicking a segment track can address the global flat list
+  const segTrackOffset = arc.segments.reduce((acc, seg, si) => {
+    acc[si] = si === 0 ? 0 : acc[si - 1] + arc.segments[si - 1].track_count
+    return acc
+  }, {})
+
+  const handleTrackClick = (segIndex, trackIndex) => {
+    const globalIndex = (segTrackOffset[segIndex] || 0) + trackIndex
+    setPlayingIndex(globalIndex)
+    playerRef.current?.playFromIndex(globalIndex)
+    setExpanded(segIndex)
+  }
+
   return (
-    <div style={{ ...s.screen, alignItems: 'flex-start', overflowY: 'auto' }}>
+    <div style={{ ...s.screen, alignItems: 'flex-start', overflowY: 'auto', paddingBottom: spotifyToken ? 90 : 0 }}>
       <div style={{ ...s.arcWrap, opacity: visible ? 1 : 0, transition: 'opacity 0.6s ease' }}>
 
         {/* Header */}
@@ -364,24 +381,46 @@ function ArcResultScreen({ arc, onReset }) {
 
               {expanded === si && (
                 <div style={s.trackList}>
-                  {seg.tracks.map((track, ti) => (
-                    <div key={track.spotify_id} style={s.trackRow} className="track-row">
-                      <div style={s.trackNum}>{ti + 1}</div>
-                      <div style={s.trackInfo}>
-                        <div style={s.trackTitle}>{track.title}</div>
-                        <div style={s.trackArtist}>{track.artist}</div>
-                      </div>
-                      <div style={s.trackMeta}>
-                        <div style={s.energyBar}>
-                          <div style={{ ...s.energyFill, width: `${track.energy * 100}%`, background: EMOTION_COLORS[track.emotion_label] }} />
+                  {seg.tracks.map((track, ti) => {
+                    const globalIdx = (segTrackOffset[si] || 0) + ti
+                    const isPlaying = playingIndex === globalIdx
+                    return (
+                      <div
+                        key={track.spotify_id}
+                        style={{
+                          ...s.trackRow,
+                          cursor: spotifyToken ? 'pointer' : 'default',
+                          background: isPlaying
+                            ? `${EMOTION_COLORS[track.emotion_label]}18`
+                            : 'transparent',
+                          borderLeft: isPlaying
+                            ? `3px solid ${EMOTION_COLORS[track.emotion_label]}`
+                            : '3px solid transparent',
+                          paddingLeft: isPlaying ? 9 : 12,
+                          transition: 'background 0.2s, border-color 0.2s',
+                        }}
+                        className="track-row"
+                        onClick={() => spotifyToken && handleTrackClick(si, ti)}
+                      >
+                        <div style={{ ...s.trackNum, color: isPlaying ? EMOTION_COLORS[track.emotion_label] : undefined }}>
+                          {isPlaying ? '▶' : ti + 1}
                         </div>
-                        <span style={s.trackDur}>{Math.round(track.duration_ms / 60000)}:{String(Math.round((track.duration_ms % 60000) / 1000)).padStart(2,'0')}</span>
+                        <div style={s.trackInfo}>
+                          <div style={{ ...s.trackTitle, color: isPlaying ? '#e2e8f0' : undefined }}>{track.title}</div>
+                          <div style={s.trackArtist}>{track.artist}</div>
+                        </div>
+                        <div style={s.trackMeta}>
+                          <div style={s.energyBar}>
+                            <div style={{ ...s.energyFill, width: `${track.energy * 100}%`, background: EMOTION_COLORS[track.emotion_label] }} />
+                          </div>
+                          <span style={s.trackDur}>{Math.round(track.duration_ms / 60000)}:{String(Math.round((track.duration_ms % 60000) / 1000)).padStart(2,'0')}</span>
+                        </div>
+                        <a href={`https://open.spotify.com/track/${track.spotify_id}`} target="_blank" rel="noreferrer" style={s.spotifyLink} onClick={e => e.stopPropagation()}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+                        </a>
                       </div>
-                      <a href={`https://open.spotify.com/track/${track.spotify_id}`} target="_blank" rel="noreferrer" style={s.spotifyLink}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
-                      </a>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -392,6 +431,15 @@ function ArcResultScreen({ arc, onReset }) {
           <div style={s.warning}>⚠ {arc.warnings[0]}</div>
         )}
       </div>
+
+      {spotifyToken && (
+        <SpotifyPlayer
+          ref={playerRef}
+          tracks={arc.tracks}
+          spotifyToken={spotifyToken}
+          onTrackChange={setPlayingIndex}
+        />
+      )}
     </div>
   )
 }
@@ -473,14 +521,15 @@ function getTimeOfDay() {
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [user, setUser]           = useState(null)
-  const [stats, setStats]         = useState(null)
-  const [readiness, setReadiness] = useState(null)
-  const [screen, setScreen]       = useState('landing') // landing | input | loading | result
-  const [arc, setArc]             = useState(null)
-  const [moodText, setMoodText]   = useState('')
-  const [waitTrack, setWaitTrack] = useState(null)
-  const [error, setError]         = useState(null)
+  const [user, setUser]               = useState(null)
+  const [stats, setStats]             = useState(null)
+  const [readiness, setReadiness]     = useState(null)
+  const [screen, setScreen]           = useState('landing') // landing | input | loading | result
+  const [arc, setArc]                 = useState(null)
+  const [moodText, setMoodText]       = useState('')
+  const [waitTrack, setWaitTrack]     = useState(null)
+  const [error, setError]             = useState(null)
+  const [spotifyToken, setSpotifyToken] = useState(null)
   const navigate                  = useNavigate()
   const [searchParams]            = useSearchParams()
 
@@ -502,6 +551,12 @@ export default function Dashboard() {
       .then(r => { if (!r.ok) throw new Error('Session expired'); return r.json() })
       .then(setUser)
       .catch(() => { localStorage.removeItem('flowstate_token'); navigate('/') })
+
+    // Fetch Spotify access token for Web Playback SDK (non-fatal if unavailable)
+    fetch(`${API}/auth/spotify-token`, { headers: hdrs })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.access_token) setSpotifyToken(d.access_token) })
+      .catch(() => {})
 
     // Load stats + emotion distribution + readiness in parallel
     Promise.all([
@@ -584,7 +639,7 @@ export default function Dashboard() {
       {screen === 'landing' && <LandingScreen user={user} stats={stats} readiness={readiness} onStart={() => setScreen('input')} />}
       {screen === 'input'   && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} />}
       {screen === 'loading' && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
-      {screen === 'result'  && arc && <ArcResultScreen arc={arc} onReset={() => { setArc(null); setScreen('input') }} />}
+      {screen === 'result'  && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} onReset={() => { setArc(null); setScreen('input') }} />}
 
       {error && (
         <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', padding: '12px 24px', borderRadius: '100px', fontSize: '14px', zIndex: 100 }}>

@@ -6,10 +6,13 @@ Spotify OAuth2 PKCE flow:
 GET  /api/v1/auth/spotify/login     → returns Spotify authorization URL
 GET  /api/v1/auth/spotify/callback  → handles redirect, issues JWT
 GET  /api/v1/auth/me                → returns current user profile
+GET  /api/v1/auth/spotify-token     → returns Spotify access token (auto-refreshes)
 """
 
 import os
 import uuid
+from datetime import datetime, timedelta
+
 import redis as redis_lib
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
@@ -26,6 +29,7 @@ from app.services.spotify_client import (
     generate_code_challenge,
     generate_code_verifier,
     get_spotify_user_profile,
+    refresh_access_token,
     token_expires_at,
 )
 
@@ -155,6 +159,44 @@ async def spotify_callback(
         url=f"{frontend_url}/dashboard?token={flowstate_token}",
         status_code=302,
     )
+
+
+@router.get("/spotify-token")
+async def get_spotify_token(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns the user's current Spotify access token.
+    Auto-refreshes proactively if the token expires within the next 5 minutes.
+    Required by the frontend Spotify Web Playback SDK initialization.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    now = datetime.utcnow()
+    expires_at = (
+        user.token_expires_at.replace(tzinfo=None)
+        if user.token_expires_at else now
+    )
+    needs_refresh = expires_at < now + timedelta(minutes=5)
+
+    if needs_refresh and user.refresh_token:
+        try:
+            token_data = await refresh_access_token(user.refresh_token)
+            user.access_token = token_data["access_token"]
+            if token_data.get("refresh_token"):
+                user.refresh_token = token_data["refresh_token"]
+            user.token_expires_at = token_expires_at(token_data.get("expires_in", 3600))
+            db.commit()
+        except Exception:
+            pass  # serve existing token if refresh fails
+
+    return {"access_token": user.access_token}
 
 
 @router.get("/me")
