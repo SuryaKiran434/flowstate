@@ -1106,6 +1106,115 @@ def classify_emotions(**context):
     context["ti"].xcom_push(key="emotion_distribution", value=label_counts)
     return total_classified
 
+# ─── ML Reclassification Task ─────────────────────────────────────────────────
+
+def reclassify_with_ml_model(**context):
+    """
+    Optional post-processing step: reclassify tracks using the trained ML model.
+
+    - No-op if model file does not exist (first deploy, model not yet trained).
+    - No-op if model metadata macro_f1 < QUALITY_GATE (model not good enough yet).
+    - Only overwrites a track's heuristic label when ML confidence > heuristic confidence.
+
+    The heuristic classify_emotions task remains unchanged and always runs first.
+    This task refines its output where the ML model is more confident.
+
+    Model path: /opt/airflow/models/emotion_classifier.joblib
+    (Mount this from the host via docker-compose when model is available.)
+    """
+    import json
+    import sys
+
+    import numpy as np
+    from sqlalchemy import create_engine, text
+
+    MODEL_PATH   = os.environ.get(
+        "EMOTION_MODEL_PATH",
+        "/opt/airflow/models/emotion_classifier.joblib",
+    )
+    META_PATH    = MODEL_PATH.replace(".joblib", "_meta.json")
+    QUALITY_GATE = 0.65  # minimum macro F1 to trust the model
+
+    if not os.path.exists(MODEL_PATH):
+        print(f"[ml_reclassify] Model not found at {MODEL_PATH} — skipping (no-op)")
+        context["ti"].xcom_push(key="ml_reclassified", value=0)
+        return 0
+
+    # Quality gate: check metadata JSON written by train_classifier.py
+    if os.path.exists(META_PATH):
+        with open(META_PATH) as f:
+            meta = json.load(f)
+        macro_f1 = meta.get("macro_f1", 0)
+        if macro_f1 < QUALITY_GATE:
+            print(
+                f"[ml_reclassify] Model macro_f1={macro_f1:.3f} < {QUALITY_GATE} threshold "
+                f"— skipping reclassification"
+            )
+            context["ti"].xcom_push(key="ml_reclassified", value=0)
+            return 0
+
+    # Load the EmotionClassifier from the backend app package
+    # Airflow workers mount the backend code at /opt/airflow/app (see docker-compose.yml)
+    backend_path = os.environ.get("BACKEND_APP_PATH", "/opt/airflow")
+    if backend_path not in sys.path:
+        sys.path.insert(0, backend_path)
+
+    try:
+        from app.services.emotion_classifier import EmotionClassifier
+    except ImportError as exc:
+        print(f"[ml_reclassify] Cannot import EmotionClassifier: {exc} — skipping")
+        context["ti"].xcom_push(key="ml_reclassified", value=0)
+        return 0
+
+    clf = EmotionClassifier.load(MODEL_PATH)
+
+    DATABASE_URL = os.environ.get(
+        "DATABASE_URL", "postgresql://flowstate:flowstate_dev@db:5432/flowstate"
+    )
+    engine = create_engine(DATABASE_URL)
+
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                track_id,
+                mfcc_mean, mfcc_std, chroma_mean,
+                spectral_centroid, zero_crossing_rate, rms_energy, tempo_librosa,
+                emotion_confidence AS heuristic_confidence
+            FROM track_features
+            WHERE mfcc_mean      IS NOT NULL
+              AND emotion_label  IS NOT NULL
+        """)).fetchall()
+
+    if not rows:
+        print("[ml_reclassify] No classified tracks found — skipping")
+        context["ti"].xcom_push(key="ml_reclassified", value=0)
+        return 0
+
+    X     = np.array([EmotionClassifier.build_feature_vector(dict(r._mapping)) for r in rows])
+    preds = clf.predict_batch(X)
+
+    updated = 0
+    with engine.begin() as conn:
+        for row, (label, ml_conf) in zip(rows, preds):
+            heuristic_conf = row.heuristic_confidence or 0.0
+            if ml_conf > heuristic_conf:
+                conn.execute(text("""
+                    UPDATE track_features
+                    SET emotion_label      = :label,
+                        emotion_confidence = :conf,
+                        updated_at         = now()
+                    WHERE track_id = :tid
+                """), {"label": label, "conf": ml_conf, "tid": row.track_id})
+                updated += 1
+
+    print(
+        f"[ml_reclassify] Reclassified {updated} / {len(rows)} tracks "
+        f"(ML confidence > heuristic confidence)"
+    )
+    context["ti"].xcom_push(key="ml_reclassified", value=updated)
+    return updated
+
+
 # ─── DAG Task Graph ───────────────────────────────────────────────────────────
 
 t1_seed = PythonOperator(
@@ -1126,10 +1235,16 @@ t3_emotions = PythonOperator(
     dag=dag,
 )
 
-t4_log = PythonOperator(
+t4_ml_reclassify = PythonOperator(
+    task_id="reclassify_with_ml_model",
+    python_callable=reclassify_with_ml_model,
+    dag=dag,
+)
+
+t5_log = PythonOperator(
     task_id="log_pipeline_run",
     python_callable=log_pipeline_run,
     dag=dag,
 )
 
-t1_seed >> t2_features >> t3_emotions >> t4_log
+t1_seed >> t2_features >> t3_emotions >> t4_ml_reclassify >> t5_log
