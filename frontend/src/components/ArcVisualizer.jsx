@@ -292,6 +292,12 @@ export default function ArcVisualizer({
       .attr('fill', pColor)
       .attr('opacity', pIdx != null ? 1 : 0)
 
+    // Tint fill gradient top stop to current emotion color
+    d3.select(svgRef.current).select('defs')
+      .select('#arc-fill-grad stop:first-child')
+      .transition().duration(800)
+      .attr('stop-color', `${pColor}38`)
+
   }, [playingIndex, tracks])
 
   // ── Render ──────────────────────────────────────────────────────────────────

@@ -20,6 +20,20 @@ const EMOTION_EMOJI = {
 }
 
 // ── Constellation Background ──────────────────────────────────────────────────
+// Module-level lerping accent color — updated by setConstellationColor()
+const _cxColor = { r: 139, g: 92, b: 246 }
+const _cxTarget = { r: 139, g: 92, b: 246 }
+
+function _hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : null
+}
+
+export function setConstellationColor(hex) {
+  const rgb = _hexToRgb(hex)
+  if (rgb) { _cxTarget.r = rgb.r; _cxTarget.g = rgb.g; _cxTarget.b = rgb.b }
+}
+
 function ConstellationBg() {
   const canvasRef = useRef(null)
   useEffect(() => {
@@ -39,6 +53,12 @@ function ConstellationBg() {
       }))
     }
     function draw() {
+      // Lerp accent color toward target (smooth ~3s transition)
+      _cxColor.r += (_cxTarget.r - _cxColor.r) * 0.018
+      _cxColor.g += (_cxTarget.g - _cxColor.g) * 0.018
+      _cxColor.b += (_cxTarget.b - _cxColor.b) * 0.018
+      const cr = Math.round(_cxColor.r), cg = Math.round(_cxColor.g), cb = Math.round(_cxColor.b)
+
       ctx.clearRect(0, 0, W, H)
       for (const p of particles) {
         p.x += p.vx; p.y += p.vy
@@ -51,7 +71,7 @@ function ConstellationBg() {
           const d = Math.sqrt(dx*dx + dy*dy)
           if (d < 120) {
             ctx.beginPath()
-            ctx.strokeStyle = `rgba(139,92,246,${(1 - d/120) * 0.18})`
+            ctx.strokeStyle = `rgba(${cr},${cg},${cb},${(1 - d/120) * 0.18})`
             ctx.lineWidth = 0.5
             ctx.moveTo(particles[i].x, particles[i].y)
             ctx.lineTo(particles[j].x, particles[j].y)
@@ -70,7 +90,7 @@ function ConstellationBg() {
         }
         ctx.beginPath()
         ctx.arc(particles[i].x, particles[i].y, particles[i].r, 0, Math.PI*2)
-        ctx.fillStyle = `rgba(180,140,255,${particles[i].alpha})`
+        ctx.fillStyle = `rgba(${Math.round(cr*1.1)},${cg},${Math.round(cb*1.05)},${particles[i].alpha})`
         ctx.fill()
       }
       animId = requestAnimationFrame(draw)
@@ -596,8 +616,26 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
     }
   }, [commandText, sessionId, authToken, adjusting, playingIndex, arc])
 
+  // ── Audio-visual emotion sync ─────────────────────────────────────────────
+  useEffect(() => {
+    const emotion = playingIndex != null ? arc.tracks[playingIndex]?.emotion_label : null
+    const hex = (emotion && EMOTION_COLORS[emotion]) ? EMOTION_COLORS[emotion] : '#8b5cf6'
+    document.documentElement.style.setProperty('--emotion-primary', hex)
+    setConstellationColor(hex)
+    return () => { document.documentElement.style.removeProperty('--emotion-primary') }
+  }, [playingIndex, arc.tracks])
+
   return (
     <div style={{ ...s.screen, alignItems: 'flex-start', overflowY: 'auto', paddingBottom: spotifyToken ? 90 : 0 }}>
+      {/* Emotion aura — full-page tint that transitions with current emotion */}
+      {playingIndex != null && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
+          background: `radial-gradient(ellipse at 50% 80%, var(--emotion-primary, #8b5cf6) 0%, transparent 65%)`,
+          opacity: 0.07,
+          transition: 'background 1.4s ease',
+        }} />
+      )}
       <div style={{ ...s.arcWrap, opacity: visible ? 1 : 0, transition: 'opacity 0.6s ease' }}>
 
         {/* Header */}
@@ -745,7 +783,7 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
                           paddingLeft: isPlaying ? 9 : 12,
                           transition: 'background 0.2s, border-color 0.2s',
                         }}
-                        className="track-row"
+                        className={`track-row${isPlaying ? ' playing-track-row' : ''}`}
                         onClick={() => spotifyToken && handleTrackClick(si, ti)}
                       >
                         <div style={{ ...s.trackNum, color: isPlaying ? EMOTION_COLORS[track.emotion_label] : undefined }}>
@@ -1237,7 +1275,7 @@ export default function Dashboard() {
   )
 
   return (
-    <div style={{ minHeight: '100vh', background: 'radial-gradient(ellipse at 20% 50%, #1a0533 0%, #080612 50%, #030310 100%)', fontFamily: "'DM Sans', sans-serif", position: 'relative', overflow: 'hidden' }}>
+    <div className="dash-root" style={{ minHeight: '100vh', background: 'radial-gradient(ellipse at 20% 50%, #1a0533 0%, #080612 50%, #030310 100%)', fontFamily: "'DM Sans', sans-serif", position: 'relative', overflow: 'hidden' }}>
       <style>{dashCss}</style>
       <ConstellationBg />
 
@@ -1274,6 +1312,12 @@ const dashCss = `
   .track-row:hover { background: rgba(255,255,255,0.04) !important; }
   .track-row { transition: background 0.15s ease !important; }
 
+  @keyframes emotionPulse {
+    0%, 100% { box-shadow: 0 0 8px var(--emotion-primary, #8b5cf6), inset 0 0 6px rgba(139,92,246,0.08); }
+    50%       { box-shadow: 0 0 20px var(--emotion-primary, #8b5cf6), inset 0 0 10px rgba(139,92,246,0.12); }
+  }
+  .playing-track-row { animation: emotionPulse 2.4s ease-in-out infinite !important; }
+
   @keyframes pulseOrb {
     0%, 100% { transform: scale(1); opacity: 0.8; box-shadow: 0 0 40px rgba(139,92,246,0.4); }
     50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 80px rgba(139,92,246,0.7); }
@@ -1286,6 +1330,9 @@ const dashCss = `
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.3); border-radius: 2px; }
+
+  :root { --emotion-primary: #8b5cf6; }
+  .dash-root { transition: background 1.2s ease !important; }
 `
 
 // ── Styles ────────────────────────────────────────────────────────────────────
