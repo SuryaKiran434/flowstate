@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import SpotifyPlayer from '../components/SpotifyPlayer'
+import ArcVisualizer from '../components/ArcVisualizer'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
@@ -360,8 +361,17 @@ function ArcResultScreen({ arc, onReset, spotifyToken }) {
           ))}
         </div>
 
-        {/* Energy curve */}
-        <EnergyCurve tracks={arc.tracks} arcPath={arc.arc_path} segments={arc.segments} />
+        {/* Energy + valence arc chart */}
+        <ArcVisualizer
+          tracks={arc.tracks}
+          segments={arc.segments}
+          arcPath={arc.arc_path}
+          playingIndex={playingIndex}
+          onTrackClick={spotifyToken ? (idx) => {
+            setPlayingIndex(idx)
+            playerRef.current?.playFromIndex(idx)
+          } : undefined}
+        />
 
         {/* Segments */}
         <div style={s.segmentsWrap}>
@@ -440,73 +450,6 @@ function ArcResultScreen({ arc, onReset, spotifyToken }) {
           onTrackChange={setPlayingIndex}
         />
       )}
-    </div>
-  )
-}
-
-// ── Energy Curve SVG ──────────────────────────────────────────────────────────
-function EnergyCurve({ tracks, arcPath, segments }) {
-  if (!tracks?.length) return null
-  const W = 680, H = 100, pad = 20
-  const innerW = W - pad * 2, innerH = H - pad * 2
-
-  const points = tracks.map((t, i) => ({
-    x: pad + (i / Math.max(tracks.length - 1, 1)) * innerW,
-    y: pad + (1 - t.energy) * innerH,
-    emotion: t.emotion_label,
-  }))
-
-  // Build smooth SVG path
-  let d = `M ${points[0].x} ${points[0].y}`
-  for (let i = 1; i < points.length; i++) {
-    const cp1x = points[i-1].x + (points[i].x - points[i-1].x) / 3
-    const cp2x = points[i].x - (points[i].x - points[i-1].x) / 3
-    d += ` C ${cp1x} ${points[i-1].y} ${cp2x} ${points[i].y} ${points[i].x} ${points[i].y}`
-  }
-
-  return (
-    <div style={s.curveWrap}>
-      <div style={s.curveLabel}>Energy arc</div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', overflow: 'visible' }}>
-        {/* Grid lines */}
-        {[0.25, 0.5, 0.75].map(v => (
-          <line key={v} x1={pad} y1={pad + v * innerH} x2={W-pad} y2={pad + v * innerH}
-            stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
-        ))}
-        {/* Gradient path */}
-        <defs>
-          <linearGradient id="curveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            {arcPath.map((e, i) => (
-              <stop key={e} offset={`${(i / (arcPath.length - 1)) * 100}%`} stopColor={EMOTION_COLORS[e]} />
-            ))}
-          </linearGradient>
-          <linearGradient id="fillGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="rgba(139,92,246,0.3)" />
-            <stop offset="100%" stopColor="rgba(139,92,246,0)" />
-          </linearGradient>
-        </defs>
-        {/* Fill under curve */}
-        <path d={`${d} L ${points[points.length-1].x} ${H} L ${points[0].x} ${H} Z`}
-          fill="url(#fillGrad)" />
-        {/* Curve line */}
-        <path d={d} fill="none" stroke="url(#curveGrad)" strokeWidth="2.5" />
-        {/* Segment boundary dots */}
-        {segments.map(seg => {
-          const first = tracks.findIndex(t => t.emotion_label === seg.emotion && t.spotify_id === seg.tracks[0]?.spotify_id)
-          if (first < 0) return null
-          const pt = points[first]
-          return (
-            <g key={seg.emotion}>
-              <circle cx={pt.x} cy={pt.y} r="5" fill={EMOTION_COLORS[seg.emotion]} stroke="#080612" strokeWidth="2" />
-              <text x={pt.x} y={pt.y - 10} textAnchor="middle" fontSize="10" fill={EMOTION_COLORS[seg.emotion]} fontFamily="DM Sans, sans-serif">{seg.emotion}</text>
-            </g>
-          )
-        })}
-      </svg>
-      <div style={s.curveAxis}>
-        <span>high energy</span>
-        <span>low energy</span>
-      </div>
     </div>
   )
 }
