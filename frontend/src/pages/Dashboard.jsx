@@ -92,7 +92,7 @@ function ConstellationBg() {
 }
 
 // ── Screen 1: Landing ─────────────────────────────────────────────────────────
-function LandingScreen({ user, stats, readiness, onStart }) {
+function LandingScreen({ user, stats, readiness, onStart, onDiscover }) {
   const [visible, setVisible] = useState(false)
   useEffect(() => { setTimeout(() => setVisible(true), 80) }, [])
 
@@ -117,16 +117,32 @@ function LandingScreen({ user, stats, readiness, onStart }) {
           <p style={s.heroSub}>
             Your library. Your emotions. A playlist that moves with you.
           </p>
-          <button
-            onClick={readiness && !readiness.ready_for_arc ? undefined : onStart}
-            disabled={readiness != null && !readiness.ready_for_arc}
-            className="start-btn"
-            style={{ ...s.startBtn, opacity: readiness && !readiness.ready_for_arc ? 0.45 : 1, cursor: readiness && !readiness.ready_for_arc ? 'not-allowed' : 'pointer' }}
-            title={readiness && !readiness.ready_for_arc ? readiness.message : undefined}
-          >
-            Build my arc
-            <span style={s.arrow}>→</span>
-          </button>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button
+              onClick={readiness && !readiness.ready_for_arc ? undefined : onStart}
+              disabled={readiness != null && !readiness.ready_for_arc}
+              className="start-btn"
+              style={{ ...s.startBtn, opacity: readiness && !readiness.ready_for_arc ? 0.45 : 1, cursor: readiness && !readiness.ready_for_arc ? 'not-allowed' : 'pointer' }}
+              title={readiness && !readiness.ready_for_arc ? readiness.message : undefined}
+            >
+              Build my arc
+              <span style={s.arrow}>→</span>
+            </button>
+            <button
+              onClick={onDiscover}
+              className="start-btn"
+              style={{
+                ...s.startBtn,
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                color: 'rgba(255,255,255,0.7)',
+                boxShadow: 'none',
+              }}
+            >
+              Discover arcs
+              <span style={s.arrow}>✦</span>
+            </button>
+          </div>
         </div>
 
         {/* Library readiness banner — shown when library is seeding or processing */}
@@ -502,6 +518,37 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
   const [adjusting, setAdjusting]       = useState(false)
   const commandInputRef                 = useRef(null)
 
+  // ── Share arc as template ─────────────────────────────────────────────────
+  const [sharing, setSharing]           = useState(false)
+  const [shareSuccess, setShareSuccess] = useState(false)
+
+  const handleShare = useCallback(async () => {
+    if (sharing || !authToken) return
+    setSharing(true)
+    try {
+      const res = await fetch(`${API}/templates`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          display_name:   arc.mood_interpretation || `${arc.source_emotion} → ${arc.target_emotion}`,
+          description:    arc.mood_interpretation,
+          source_emotion: arc.source_emotion,
+          target_emotion: arc.target_emotion,
+          arc_path:       arc.arc_path,
+          duration_mins:  Math.max(5, Math.round(arc.total_duration_ms / 60000)),
+        }),
+      })
+      if (res.ok) {
+        setShareSuccess(true)
+        setTimeout(() => setShareSuccess(false), 3000)
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      setSharing(false)
+    }
+  }, [sharing, authToken, arc])
+
   useEffect(() => {
     if (commandOpen) commandInputRef.current?.focus()
   }, [commandOpen])
@@ -575,7 +622,27 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
               )}
             </div>
           </div>
-          <button onClick={() => { patchSession('abandoned'); onReset() }} style={s.newArcBtn}>New arc</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              onClick={handleShare}
+              disabled={sharing || shareSuccess}
+              title="Share this arc as a template others can remix"
+              style={{
+                background: shareSuccess ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.05)',
+                border: `1px solid ${shareSuccess ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.12)'}`,
+                color: shareSuccess ? '#34d399' : 'rgba(255,255,255,0.6)',
+                borderRadius: 8,
+                padding: '6px 14px',
+                fontSize: 12,
+                cursor: sharing || shareSuccess ? 'default' : 'pointer',
+                fontFamily: "'DM Sans', sans-serif",
+                transition: 'all 0.2s',
+              }}
+            >
+              {shareSuccess ? '✓ Shared' : sharing ? '…' : '↑ Share'}
+            </button>
+            <button onClick={() => { patchSession('abandoned'); onReset() }} style={s.newArcBtn}>New arc</button>
+          </div>
         </div>
 
         {/* Replan toast */}
@@ -810,6 +877,209 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
   )
 }
 
+// ── Screen 5: Discover Templates ─────────────────────────────────────────────
+function DiscoverScreen({ onBack, authToken, onRemix }) {
+  const [templates, setTemplates] = useState([])
+  const [total, setTotal]         = useState(0)
+  const [loading, setLoading]     = useState(true)
+  const [remixing, setRemixing]   = useState(null)   // template_id being remixed
+  const [filterSrc, setFilterSrc] = useState('')
+  const [filterTgt, setFilterTgt] = useState('')
+  const [visible, setVisible]     = useState(false)
+
+  useEffect(() => { setTimeout(() => setVisible(true), 80) }, [])
+
+  const loadTemplates = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: 20, offset: 0 })
+      if (filterSrc) params.set('source', filterSrc)
+      if (filterTgt) params.set('target', filterTgt)
+      const res = await fetch(`${API}/templates?${params}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setTemplates(data.templates || [])
+      setTotal(data.total || 0)
+    } catch {
+      // non-fatal
+    } finally {
+      setLoading(false)
+    }
+  }, [authToken, filterSrc, filterTgt])
+
+  useEffect(() => { loadTemplates() }, [loadTemplates])
+
+  const handleRemix = async (tmplId) => {
+    if (remixing || !authToken) return
+    setRemixing(tmplId)
+    try {
+      const res = await fetch(`${API}/templates/${tmplId}/remix`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) return
+      const arc = await res.json()
+      onRemix(arc)
+    } catch {
+      // non-fatal
+    } finally {
+      setRemixing(null)
+    }
+  }
+
+  const EMOTIONS = ['energetic','happy','euphoric','peaceful','focused','romantic',
+                    'nostalgic','neutral','melancholic','sad','tense','angry']
+
+  return (
+    <div style={s.screen}>
+      <div style={{
+        ...s.landingWrap,
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'none' : 'translateY(20px)',
+        transition: 'all 0.9s cubic-bezier(0.16,1,0.3,1)',
+        maxWidth: 780,
+      }}>
+        {/* Nav */}
+        <div style={s.nav}>
+          <span style={s.navBrand}>◈ flowstate</span>
+          <button onClick={onBack} style={{ ...s.logoutBtn }}>← Back</button>
+        </div>
+
+        <div style={{ marginBottom: 24 }}>
+          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 700, color: '#e2e8f0', marginBottom: 6 }}>
+            Discover Arcs
+          </h2>
+          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 14 }}>
+            Remix a shared emotional template with your own library — same journey, entirely your music.
+          </p>
+        </div>
+
+        {/* Filters */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+          {[
+            { label: 'From', val: filterSrc, set: setFilterSrc },
+            { label: 'To',   val: filterTgt, set: setFilterTgt },
+          ].map(({ label, val, set }) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>{label}</span>
+              <select
+                value={val}
+                onChange={e => set(e.target.value)}
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 8,
+                  color: val ? '#e2e8f0' : 'rgba(255,255,255,0.35)',
+                  padding: '5px 10px',
+                  fontSize: 12,
+                  fontFamily: "'DM Sans', sans-serif",
+                  cursor: 'pointer',
+                  outline: 'none',
+                }}
+              >
+                <option value="">Any emotion</option>
+                {EMOTIONS.map(e => (
+                  <option key={e} value={e} style={{ background: '#0d0921' }}>{e}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+          {(filterSrc || filterTgt) && (
+            <button
+              onClick={() => { setFilterSrc(''); setFilterTgt('') }}
+              style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', fontSize: 12 }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {/* Template list */}
+        {loading ? (
+          <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14, textAlign: 'center', padding: '40px 0' }}>
+            Loading templates…
+          </div>
+        ) : templates.length === 0 ? (
+          <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14, textAlign: 'center', padding: '40px 0' }}>
+            No templates yet — generate an arc and share it to be the first!
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', marginBottom: 12 }}>
+              {total} template{total !== 1 ? 's' : ''}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {templates.map(tmpl => (
+                <div
+                  key={tmpl.id}
+                  style={{
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 12,
+                    padding: '14px 18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 16,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: '#e2e8f0', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {tmpl.display_name}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 11, color: EMOTION_COLORS[tmpl.source_emotion] || '#a78bfa' }}>
+                        {tmpl.source_emotion}
+                      </span>
+                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>→</span>
+                      <span style={{ fontSize: 11, color: EMOTION_COLORS[tmpl.target_emotion] || '#a78bfa' }}>
+                        {tmpl.target_emotion}
+                      </span>
+                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>·</span>
+                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>{tmpl.duration_mins} min</span>
+                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>·</span>
+                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+                        {tmpl.remix_count} remix{tmpl.remix_count !== 1 ? 'es' : ''}
+                      </span>
+                      {tmpl.author && (
+                        <>
+                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>·</span>
+                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>by {tmpl.author}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleRemix(tmpl.id)}
+                    disabled={remixing === tmpl.id}
+                    style={{
+                      background: 'rgba(139, 92, 246, 0.15)',
+                      border: '1px solid rgba(139, 92, 246, 0.35)',
+                      color: '#a78bfa',
+                      borderRadius: 8,
+                      padding: '6px 16px',
+                      fontSize: 12,
+                      cursor: remixing === tmpl.id ? 'default' : 'pointer',
+                      fontFamily: "'DM Sans', sans-serif",
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {remixing === tmpl.id ? '…' : 'Remix →'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getTimeOfDay() {
   const h = new Date().getHours()
@@ -823,7 +1093,7 @@ export default function Dashboard() {
   const [user, setUser]               = useState(null)
   const [stats, setStats]             = useState(null)
   const [readiness, setReadiness]     = useState(null)
-  const [screen, setScreen]           = useState('landing') // landing | input | loading | result
+  const [screen, setScreen]           = useState('landing') // landing | input | loading | result | discover
   const [arc, setArc]                 = useState(null)
   const [sessionId, setSessionId]     = useState(null)
   const [moodText, setMoodText]       = useState('')
@@ -971,10 +1241,11 @@ export default function Dashboard() {
       <style>{dashCss}</style>
       <ConstellationBg />
 
-      {screen === 'landing' && <LandingScreen user={user} stats={stats} readiness={readiness} onStart={() => setScreen('input')} />}
-      {screen === 'input'   && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} authToken={token()} />}
-      {screen === 'loading' && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
-      {screen === 'result'  && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}
+      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} />}
+      {screen === 'input'    && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} authToken={token()} />}
+      {screen === 'loading'  && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
+      {screen === 'result'   && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}
+      {screen === 'discover' && <DiscoverScreen authToken={token()} onBack={() => setScreen('landing')} onRemix={(arc) => { setArc(arc); setScreen('result') }} />}
 
       {error && (
         <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', padding: '12px 24px', borderRadius: '100px', fontSize: '14px', zIndex: 100 }}>

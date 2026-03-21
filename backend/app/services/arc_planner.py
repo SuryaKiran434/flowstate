@@ -153,6 +153,7 @@ class ArcPlanner:
         db,
         user_id: str,
         excluded_spotify_ids: Optional[set] = None,
+        fixed_arc_path: Optional[list[str]] = None,
     ) -> dict:
         """
         Production entry point. Loads track pool from DB then plans the arc.
@@ -172,7 +173,7 @@ class ArcPlanner:
                 "total_tracks": 0,
             }
 
-        return self.plan(source, target, duration_minutes, track_pool)
+        return self.plan(source, target, duration_minutes, track_pool, fixed_arc_path=fixed_arc_path)
 
     def resolve_replan_source(self, skipped_emotion: str, target: str) -> str:
         """
@@ -305,6 +306,7 @@ class ArcPlanner:
         target: str,
         duration_minutes: int,
         track_pool: list[TrackCandidate],
+        fixed_arc_path: Optional[list[str]] = None,
     ) -> dict:
         """
         Main entry point. Returns a structured arc.
@@ -323,7 +325,7 @@ class ArcPlanner:
                 }
             }
         """
-        arc_path   = self.find_emotional_path(source, target)
+        arc_path   = fixed_arc_path or self.find_emotional_path(source, target)
         allocation = self._allocate_tracks_per_segment(arc_path, duration_minutes)
         directions = self._compute_energy_directions(arc_path)
 
