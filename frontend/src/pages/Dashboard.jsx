@@ -557,7 +557,23 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
         <div style={s.arcHeader}>
           <div>
             <div style={s.arcInterpret}>{arc.mood_interpretation}</div>
-            <div style={s.arcMeta}>{arc.total_tracks} tracks · {totalMin} min · {arc.arc_path.length} emotional stages</div>
+            <div style={s.arcMeta}>
+              {arc.total_tracks} tracks · {totalMin} min · {arc.arc_path.length} emotional stages
+              {arc.personalised && (
+                <span style={{
+                  marginLeft: 10,
+                  background: 'rgba(139, 92, 246, 0.15)',
+                  border: '1px solid rgba(139, 92, 246, 0.35)',
+                  borderRadius: 100,
+                  padding: '1px 9px',
+                  fontSize: 11,
+                  color: '#a78bfa',
+                  verticalAlign: 'middle',
+                }}>
+                  personalised
+                </span>
+              )}
+            </div>
           </div>
           <button onClick={() => { patchSession('abandoned'); onReset() }} style={s.newArcBtn}>New arc</button>
         </div>
