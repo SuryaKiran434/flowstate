@@ -10,6 +10,7 @@ GET  /api/v1/auth/me                → returns current user profile
 
 import os
 import uuid
+import redis as redis_lib
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -30,9 +31,11 @@ from app.services.spotify_client import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
-# In-memory store for PKCE verifiers keyed by state
-# In production: use Redis with TTL
-_pkce_store: dict[str, str] = {}
+# Redis-backed PKCE verifier store — keyed by state UUID, expires after 10 minutes.
+# Replaces the previous in-memory dict which leaked on abandoned logins and
+# was lost on server restart.
+_redis = redis_lib.Redis.from_url(settings.redis_url, decode_responses=True)
+_PKCE_TTL = 600  # seconds — standard OAuth state lifetime
 
 
 @router.get("/spotify/login")
@@ -45,8 +48,8 @@ async def spotify_login():
     code_verifier = generate_code_verifier()
     code_challenge = generate_code_challenge(code_verifier)
 
-    # Store verifier keyed by state for callback lookup
-    _pkce_store[state] = code_verifier
+    # Store verifier in Redis — expires automatically after _PKCE_TTL seconds
+    _redis.setex(f"pkce:{state}", _PKCE_TTL, code_verifier)
 
     auth_url = build_auth_url(state=state, code_challenge=code_challenge)
 
@@ -70,8 +73,8 @@ async def spotify_callback(
     - Issues Flowstate JWT
     - Redirects frontend to /dashboard with token in query param
     """
-    # Validate state and retrieve PKCE verifier
-    code_verifier = _pkce_store.pop(state, None)
+    # Validate state and retrieve PKCE verifier — atomic get-and-delete
+    code_verifier = _redis.getdel(f"pkce:{state}")
     if not code_verifier:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
