@@ -163,6 +163,59 @@ def get_tracks_by_emotion(
     }
 
 
+@router.get("/readiness")
+def get_library_readiness(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns the readiness state of the user's library for arc generation.
+
+    States:
+      - "empty":      No tracks seeded yet (background seed may be in progress)
+      - "processing": Tracks seeded but not yet classified (Airflow DAG pending)
+      - "ready":      Tracks with emotion labels exist — arc generation works
+    """
+    row = db.execute(text("""
+        SELECT
+            COUNT(DISTINCT ut.track_id)  AS total_tracks,
+            COUNT(tf.track_id)           AS tracks_with_features,
+            COUNT(tf.emotion_label)      AS tracks_with_emotions
+        FROM user_tracks ut
+        LEFT JOIN track_features tf ON ut.track_id = tf.track_id
+        WHERE ut.user_id = cast(:uid as uuid)
+    """), {"uid": user_id}).fetchone()
+
+    total    = row.total_tracks or 0
+    features = row.tracks_with_features or 0
+    emotions = row.tracks_with_emotions or 0
+
+    if total == 0:
+        state = "empty"
+        message = "Your library is being prepared\u2026 this usually takes under a minute."
+    elif emotions == 0:
+        state = "processing"
+        message = (
+            f"{total} track{'s' if total != 1 else ''} found. "
+            "Audio analysis is in progress \u2014 arcs will be available soon."
+        )
+    else:
+        state = "ready"
+        message = (
+            f"{emotions} track{'s' if emotions != 1 else ''} ready. "
+            "Let\u2019s build your arc."
+        )
+
+    return {
+        "state":                state,
+        "total_tracks":         total,
+        "tracks_with_features": features,
+        "tracks_with_emotions": emotions,
+        "ready_for_arc":        emotions > 0,
+        "message":              message,
+    }
+
+
 @router.get("/arc-pool")
 def get_arc_pool(
     user_id: str = Depends(get_current_user_id),

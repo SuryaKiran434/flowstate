@@ -90,7 +90,7 @@ function ConstellationBg() {
 }
 
 // ── Screen 1: Landing ─────────────────────────────────────────────────────────
-function LandingScreen({ user, stats, onStart }) {
+function LandingScreen({ user, stats, readiness, onStart }) {
   const [visible, setVisible] = useState(false)
   useEffect(() => { setTimeout(() => setVisible(true), 80) }, [])
 
@@ -115,11 +115,25 @@ function LandingScreen({ user, stats, onStart }) {
           <p style={s.heroSub}>
             Your library. Your emotions. A playlist that moves with you.
           </p>
-          <button onClick={onStart} className="start-btn" style={s.startBtn}>
+          <button
+            onClick={readiness && !readiness.ready_for_arc ? undefined : onStart}
+            disabled={readiness != null && !readiness.ready_for_arc}
+            className="start-btn"
+            style={{ ...s.startBtn, opacity: readiness && !readiness.ready_for_arc ? 0.45 : 1, cursor: readiness && !readiness.ready_for_arc ? 'not-allowed' : 'pointer' }}
+            title={readiness && !readiness.ready_for_arc ? readiness.message : undefined}
+          >
             Build my arc
             <span style={s.arrow}>→</span>
           </button>
         </div>
+
+        {/* Library readiness banner — shown when library is seeding or processing */}
+        {readiness && readiness.state !== 'ready' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '12px', padding: '10px 18px', marginBottom: '16px', fontSize: '13px', color: 'rgba(255,255,255,0.6)' }}>
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: readiness.state === 'empty' ? '#8b5cf6' : '#06b6d4', boxShadow: `0 0 8px ${readiness.state === 'empty' ? '#8b5cf6' : '#06b6d4'}`, display: 'inline-block', flexShrink: 0 }} className="pulse-orb" />
+            {readiness.message}
+          </div>
+        )}
 
         {/* Stats row */}
         {stats && (
@@ -459,15 +473,16 @@ function getTimeOfDay() {
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [user, setUser]       = useState(null)
-  const [stats, setStats]     = useState(null)
-  const [screen, setScreen]   = useState('landing') // landing | input | loading | result
-  const [arc, setArc]         = useState(null)
-  const [moodText, setMoodText] = useState('')
+  const [user, setUser]           = useState(null)
+  const [stats, setStats]         = useState(null)
+  const [readiness, setReadiness] = useState(null)
+  const [screen, setScreen]       = useState('landing') // landing | input | loading | result
+  const [arc, setArc]             = useState(null)
+  const [moodText, setMoodText]   = useState('')
   const [waitTrack, setWaitTrack] = useState(null)
-  const [error, setError]     = useState(null)
-  const navigate              = useNavigate()
-  const [searchParams]        = useSearchParams()
+  const [error, setError]         = useState(null)
+  const navigate                  = useNavigate()
+  const [searchParams]            = useSearchParams()
 
   const token = useCallback(() =>
     searchParams.get('token') || localStorage.getItem('flowstate_token'), [searchParams])
@@ -488,12 +503,14 @@ export default function Dashboard() {
       .then(setUser)
       .catch(() => { localStorage.removeItem('flowstate_token'); navigate('/') })
 
-    // Load stats + emotion distribution in parallel
+    // Load stats + emotion distribution + readiness in parallel
     Promise.all([
       fetch(`${API}/tracks/stats`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/emotions`, { headers: hdrs }).then(r => r.json()),
-    ]).then(([statsData, emotionData]) => {
+      fetch(`${API}/tracks/readiness`, { headers: hdrs }).then(r => r.json()),
+    ]).then(([statsData, emotionData, readinessData]) => {
       setStats({ ...statsData, distribution: emotionData.distribution })
+      setReadiness(readinessData)
       // Pick a peaceful/neutral track for the loading screen
       const peaceful = emotionData.distribution?.find(e => e.emotion_label === 'peaceful')
       if (peaceful) {
@@ -504,6 +521,29 @@ export default function Dashboard() {
       }
     }).catch(() => {})
   }, [navigate, searchParams])
+
+  // Poll readiness every 8s until library is ready
+  useEffect(() => {
+    if (!readiness || readiness.state === 'ready') return
+    const tok = localStorage.getItem('flowstate_token')
+    if (!tok) return
+    const interval = setInterval(() => {
+      fetch(`${API}/tracks/readiness`, { headers: { Authorization: `Bearer ${tok}` } })
+        .then(r => r.json())
+        .then(data => {
+          setReadiness(data)
+          if (data.state === 'ready') {
+            // Refresh stats too now that emotions are available
+            Promise.all([
+              fetch(`${API}/tracks/stats`, { headers: { Authorization: `Bearer ${tok}` } }).then(r => r.json()),
+              fetch(`${API}/tracks/emotions`, { headers: { Authorization: `Bearer ${tok}` } }).then(r => r.json()),
+            ]).then(([s, e]) => setStats({ ...s, distribution: e.distribution })).catch(() => {})
+          }
+        })
+        .catch(() => {})
+    }, 8000)
+    return () => clearInterval(interval)
+  }, [readiness?.state])
 
   async function handleGenerateArc(text, duration) {
     setMoodText(text)
@@ -541,7 +581,7 @@ export default function Dashboard() {
       <style>{dashCss}</style>
       <ConstellationBg />
 
-      {screen === 'landing' && <LandingScreen user={user} stats={stats} onStart={() => setScreen('input')} />}
+      {screen === 'landing' && <LandingScreen user={user} stats={stats} readiness={readiness} onStart={() => setScreen('input')} />}
       {screen === 'input'   && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} />}
       {screen === 'loading' && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
       {screen === 'result'  && arc && <ArcResultScreen arc={arc} onReset={() => { setArc(null); setScreen('input') }} />}

@@ -11,7 +11,7 @@ GET  /api/v1/auth/me                → returns current user profile
 import os
 import uuid
 import redis as redis_lib
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token, get_current_user_id
 from app.db.session import get_db
 from app.models.user import User
+from app.services.library_seeder import seed_user_library_background
 from app.services.spotify_client import (
     build_auth_url,
     exchange_code_for_tokens,
@@ -64,6 +65,7 @@ async def spotify_callback(
     code: str = Query(...),
     state: str = Query(...),
     db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
 ):
     """
     Step 2: Spotify redirects here with authorization code.
@@ -111,14 +113,17 @@ async def spotify_callback(
     email = profile.get("email", "")
 
     # Upsert user in database
-    user = db.query(User).filter(User.spotify_id == spotify_id).first()
-    if user:
-        user.display_name = display_name
-        user.email = email
-        user.access_token = access_token
+    existing = db.query(User).filter(User.spotify_id == spotify_id).first()
+    is_new_user = existing is None
+
+    if existing:
+        existing.display_name = display_name
+        existing.email = email
+        existing.access_token = access_token
         if refresh_token:
-            user.refresh_token = refresh_token
-        user.token_expires_at = token_expires_at(expires_in)
+            existing.refresh_token = refresh_token
+        existing.token_expires_at = token_expires_at(expires_in)
+        user = existing
     else:
         user = User(
             spotify_id=spotify_id,
@@ -132,6 +137,14 @@ async def spotify_callback(
 
     db.commit()
     db.refresh(user)
+
+    # Seed library in background for new users — runs after response is sent
+    if is_new_user and background_tasks is not None:
+        background_tasks.add_task(
+            seed_user_library_background,
+            user_id=str(user.id),
+            access_token=access_token,
+        )
 
     # Issue Flowstate JWT
     flowstate_token = create_access_token(data={"sub": str(user.id)})
