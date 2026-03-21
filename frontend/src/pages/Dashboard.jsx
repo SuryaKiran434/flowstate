@@ -305,12 +305,41 @@ function LoadingScreen({ moodText, waitTrack }) {
 }
 
 // ── Screen 4: Arc Result ──────────────────────────────────────────────────────
-function ArcResultScreen({ arc, onReset, spotifyToken }) {
+function ArcResultScreen({ arc, onReset, spotifyToken, sessionId, authToken }) {
   const [visible, setVisible]         = useState(false)
   const [expanded, setExpanded]       = useState(null)
   const [playingIndex, setPlayingIndex] = useState(null)
   const playerRef                     = useRef(null)
+  const sessionStatus                 = useRef('generated') // track without re-render
   useEffect(() => { setTimeout(() => setVisible(true), 80) }, [])
+
+  // ── Session telemetry helpers ──────────────────────────────────────────────
+  const patchSession = useCallback((status) => {
+    if (!sessionId || !authToken) return
+    const current = sessionStatus.current
+    const allowed = { generated: ['active'], active: ['completed', 'abandoned'] }
+    if (!allowed[current]?.includes(status)) return
+    sessionStatus.current = status
+    fetch(`${API}/sessions/${sessionId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    }).catch(() => {})
+  }, [sessionId, authToken])
+
+  const postTrackEvent = useCallback((position, event) => {
+    if (!sessionId || !authToken) return
+    fetch(`${API}/sessions/${sessionId}/events`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position, event }),
+    }).catch(() => {})
+  }, [sessionId, authToken])
+
+  // Abandon session if user navigates away without completing
+  useEffect(() => {
+    return () => { patchSession('abandoned') }
+  }, [patchSession])
 
   const totalMin = Math.round(arc.total_duration_ms / 60000)
 
@@ -323,10 +352,17 @@ function ArcResultScreen({ arc, onReset, spotifyToken }) {
 
   const handleTrackClick = (segIndex, trackIndex) => {
     const globalIndex = (segTrackOffset[segIndex] || 0) + trackIndex
+    patchSession('active')
     setPlayingIndex(globalIndex)
     playerRef.current?.playFromIndex(globalIndex)
     setExpanded(segIndex)
   }
+
+  const handleTrackChange = useCallback((newIndex) => {
+    patchSession('active')
+    postTrackEvent(newIndex, 'play')
+    setPlayingIndex(newIndex)
+  }, [patchSession, postTrackEvent])
 
   return (
     <div style={{ ...s.screen, alignItems: 'flex-start', overflowY: 'auto', paddingBottom: spotifyToken ? 90 : 0 }}>
@@ -338,7 +374,7 @@ function ArcResultScreen({ arc, onReset, spotifyToken }) {
             <div style={s.arcInterpret}>{arc.mood_interpretation}</div>
             <div style={s.arcMeta}>{arc.total_tracks} tracks · {totalMin} min · {arc.arc_path.length} emotional stages</div>
           </div>
-          <button onClick={onReset} style={s.newArcBtn}>New arc</button>
+          <button onClick={() => { patchSession('abandoned'); onReset() }} style={s.newArcBtn}>New arc</button>
         </div>
 
         {/* Path visualization */}
@@ -447,7 +483,7 @@ function ArcResultScreen({ arc, onReset, spotifyToken }) {
           ref={playerRef}
           tracks={arc.tracks}
           spotifyToken={spotifyToken}
-          onTrackChange={setPlayingIndex}
+          onTrackChange={handleTrackChange}
         />
       )}
     </div>
@@ -469,6 +505,7 @@ export default function Dashboard() {
   const [readiness, setReadiness]     = useState(null)
   const [screen, setScreen]           = useState('landing') // landing | input | loading | result
   const [arc, setArc]                 = useState(null)
+  const [sessionId, setSessionId]     = useState(null)
   const [moodText, setMoodText]       = useState('')
   const [waitTrack, setWaitTrack]     = useState(null)
   const [error, setError]             = useState(null)
@@ -562,6 +599,36 @@ export default function Dashboard() {
       const data = await res.json()
       setArc(data)
       setScreen('result')
+
+      // Create session record asynchronously — non-blocking, non-fatal
+      const segmentOf = (() => {
+        let offset = 0
+        const map = {}
+        data.segments.forEach((seg, si) => {
+          for (let i = 0; i < seg.track_count; i++) map[offset + i] = si
+          offset += seg.track_count
+        })
+        return map
+      })()
+      fetch(`${API}/sessions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_emotion: data.arc_path[0],
+          target_emotion: data.arc_path[data.arc_path.length - 1],
+          duration_mins: Math.round(data.total_duration_ms / 60000),
+          arc_path: data.arc_path,
+          tracks: data.tracks.map((t, i) => ({
+            track_id: t.spotify_id,
+            position: i,
+            emotion_label: t.emotion_label,
+            arc_segment: segmentOf[i] ?? null,
+          })),
+        }),
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.session_id) setSessionId(d.session_id) })
+        .catch(() => {})
     } catch (e) {
       setError(e.message)
       setScreen('input')
@@ -582,7 +649,7 @@ export default function Dashboard() {
       {screen === 'landing' && <LandingScreen user={user} stats={stats} readiness={readiness} onStart={() => setScreen('input')} />}
       {screen === 'input'   && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} />}
       {screen === 'loading' && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
-      {screen === 'result'  && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} onReset={() => { setArc(null); setScreen('input') }} />}
+      {screen === 'result'  && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}
 
       {error && (
         <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', padding: '12px 24px', borderRadius: '100px', fontSize: '14px', zIndex: 100 }}>
