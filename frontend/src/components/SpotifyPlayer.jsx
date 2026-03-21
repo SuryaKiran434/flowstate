@@ -32,8 +32,10 @@ function fmtMs(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
+const QUICK_SKIP_THRESHOLD_MS = 30_000  // < 30s played = quick skip
+
 const SpotifyPlayer = forwardRef(function SpotifyPlayer(
-  { tracks = [], spotifyToken, onTrackChange },
+  { tracks = [], spotifyToken, onTrackChange, onQuickSkip },
   ref,
 ) {
   const [deviceId, setDeviceId]       = useState(null)
@@ -48,9 +50,12 @@ const SpotifyPlayer = forwardRef(function SpotifyPlayer(
   const playerRef   = useRef(null)
   const intervalRef = useRef(null)
   const deviceIdRef = useRef(null)  // keep stable reference for async callbacks
+  const positionRef = useRef(0)     // mirrors position state — readable in SDK callbacks
+  const currentIndexRef = useRef(0) // mirrors currentIndex — readable in SDK callbacks
 
-  // ── Sync deviceId to ref so async callbacks can read it ────────────────────
+  // ── Sync refs so async SDK callbacks can read latest values ────────────────
   useEffect(() => { deviceIdRef.current = deviceId }, [deviceId])
+  useEffect(() => { currentIndexRef.current = currentIndex }, [currentIndex])
 
   // ── Load Spotify SDK script and initialize player ───────────────────────────
   useEffect(() => {
@@ -86,18 +91,28 @@ const SpotifyPlayer = forwardRef(function SpotifyPlayer(
       player.addListener('player_state_changed', state => {
         if (!state) return
         setIsPaused(state.paused)
-        setPosition(state.position)
         setDuration(state.duration)
 
-        // Sync currentIndex by matching the playing URI to our track list
+        // Sync currentIndex by matching the playing URI to our track list.
+        // Check for quick skip BEFORE updating positionRef so we can read
+        // the previous track's playback position.
         const uri = state.track_window?.current_track?.uri
         if (uri) {
           const idx = tracks.findIndex(t => `spotify:track:${t.spotify_id}` === uri)
-          if (idx !== -1 && idx !== currentIndex) {
+          if (idx !== -1 && idx !== currentIndexRef.current) {
+            // Track changed — was the previous track quick-skipped?
+            if (positionRef.current < QUICK_SKIP_THRESHOLD_MS) {
+              onQuickSkip?.(currentIndexRef.current)
+            }
             setCurrentIndex(idx)
+            currentIndexRef.current = idx
             onTrackChange?.(idx)
           }
         }
+
+        // Update position ref AFTER skip detection (positionRef held prev track value)
+        positionRef.current = state.position
+        setPosition(state.position)
       })
 
       player.addListener('authentication_error', () => {
@@ -138,7 +153,11 @@ const SpotifyPlayer = forwardRef(function SpotifyPlayer(
     clearInterval(intervalRef.current)
     if (!isPaused) {
       intervalRef.current = setInterval(() => {
-        setPosition(p => Math.min(p + 1000, duration))
+        setPosition(p => {
+          const next = Math.min(p + 1000, duration)
+          positionRef.current = next
+          return next
+        })
       }, 1000)
     }
     return () => clearInterval(intervalRef.current)

@@ -97,7 +97,12 @@ class ArcPlanner:
 
     # ── DB integration ────────────────────────────────────────────────────────
 
-    def load_track_pool_from_db(self, db, user_id: str) -> list[TrackCandidate]:
+    def load_track_pool_from_db(
+        self,
+        db,
+        user_id: str,
+        excluded_spotify_ids: Optional[set] = None,
+    ) -> list[TrackCandidate]:
         """
         Load all classified tracks for a user from the DB in one query.
         Returns a list of TrackCandidate objects ready for arc planning.
@@ -122,6 +127,7 @@ class ArcPlanner:
             ORDER BY RANDOM()
         """), {"uid": user_id}).fetchall()
 
+        excluded = excluded_spotify_ids or set()
         return [
             TrackCandidate(
                 track_id=str(r.track_id),
@@ -136,7 +142,7 @@ class ArcPlanner:
                 tempo=r.tempo_librosa or 120.0,
             )
             for r in rows
-            if r.emotion_label is not None
+            if r.emotion_label is not None and r.spotify_id not in excluded
         ]
 
     def plan_from_db(
@@ -146,11 +152,15 @@ class ArcPlanner:
         duration_minutes: int,
         db,
         user_id: str,
+        excluded_spotify_ids: Optional[set] = None,
     ) -> dict:
         """
         Production entry point. Loads track pool from DB then plans the arc.
+        Optionally excludes already-played tracks (for mid-session re-planning).
         """
-        track_pool = self.load_track_pool_from_db(db, user_id)
+        track_pool = self.load_track_pool_from_db(
+            db, user_id, excluded_spotify_ids=excluded_spotify_ids
+        )
 
         if not track_pool:
             return {
@@ -163,6 +173,23 @@ class ArcPlanner:
             }
 
         return self.plan(source, target, duration_minutes, track_pool)
+
+    def resolve_replan_source(self, skipped_emotion: str, target: str) -> str:
+        """
+        When a user skips 2+ consecutive tracks in `skipped_emotion`, find the
+        best neighbor node to re-enter from — the one with the shortest path
+        to `target`, so the re-planned arc makes natural progress.
+        """
+        neighbors = list(self.graph.get(skipped_emotion, {}).keys())
+        if not neighbors:
+            return skipped_emotion  # no neighbors — stay put
+
+        # Pick the neighbor with the shortest path to target
+        best = min(
+            neighbors,
+            key=lambda n: len(self.find_emotional_path(n, target))
+        )
+        return best
 
     # ── Core planning ─────────────────────────────────────────────────────────
 

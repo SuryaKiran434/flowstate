@@ -305,12 +305,16 @@ function LoadingScreen({ moodText, waitTrack }) {
 }
 
 // ── Screen 4: Arc Result ──────────────────────────────────────────────────────
-function ArcResultScreen({ arc, onReset, spotifyToken, sessionId, authToken }) {
+function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, authToken }) {
+  const [arc, setArc]                 = useState(initialArc)  // may be replaced by replan
   const [visible, setVisible]         = useState(false)
   const [expanded, setExpanded]       = useState(null)
   const [playingIndex, setPlayingIndex] = useState(null)
+  const [replanNotice, setReplanNotice] = useState(null)  // string | null
+  const [replanning, setReplanning]   = useState(false)
   const playerRef                     = useRef(null)
   const sessionStatus                 = useRef('generated') // track without re-render
+  const quickSkipCountRef             = useRef(0)
   useEffect(() => { setTimeout(() => setVisible(true), 80) }, [])
 
   // ── Session telemetry helpers ──────────────────────────────────────────────
@@ -340,6 +344,58 @@ function ArcResultScreen({ arc, onReset, spotifyToken, sessionId, authToken }) {
   useEffect(() => {
     return () => { patchSession('abandoned') }
   }, [patchSession])
+
+  // ── Skip-driven re-planning ────────────────────────────────────────────────
+  const handleReplan = useCallback(async (currentPosition) => {
+    if (!sessionId || !authToken || replanning) return
+    setReplanning(true)
+
+    // Remaining duration: sum of tracks from currentPosition onward (in minutes)
+    const remainingMs = arc.tracks
+      .slice(currentPosition)
+      .reduce((sum, t) => sum + (t.duration_ms || 0), 0)
+    const remainingMins = Math.max(5, Math.round(remainingMs / 60000))
+
+    try {
+      const res = await fetch(`${API}/arc/replan`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          current_position: currentPosition,
+          remaining_duration_minutes: remainingMins,
+        }),
+      })
+      if (!res.ok) return
+      const newArc = await res.json()
+
+      setArc(prev => ({
+        ...prev,
+        arc_path:          newArc.arc_path,
+        segments:          newArc.segments,
+        tracks:            newArc.tracks,
+        total_tracks:      newArc.total_tracks,
+        total_duration_ms: newArc.total_duration_ms,
+      }))
+      setExpanded(null)
+      setPlayingIndex(null)
+      setReplanNotice(newArc.replan_reason || 'Arc re-routed')
+      setTimeout(() => setReplanNotice(null), 4000)
+    } catch {
+      // non-fatal — continue with existing arc
+    } finally {
+      setReplanning(false)
+      quickSkipCountRef.current = 0
+    }
+  }, [sessionId, authToken, arc, replanning])
+
+  const handleQuickSkip = useCallback((skippedIndex) => {
+    postTrackEvent(skippedIndex, 'skip')
+    quickSkipCountRef.current += 1
+    if (quickSkipCountRef.current >= 2) {
+      handleReplan(skippedIndex + 1)
+    }
+  }, [postTrackEvent, handleReplan])
 
   const totalMin = Math.round(arc.total_duration_ms / 60000)
 
@@ -376,6 +432,38 @@ function ArcResultScreen({ arc, onReset, spotifyToken, sessionId, authToken }) {
           </div>
           <button onClick={() => { patchSession('abandoned'); onReset() }} style={s.newArcBtn}>New arc</button>
         </div>
+
+        {/* Replan toast */}
+        {replanNotice && (
+          <div style={{
+            background: 'rgba(139, 92, 246, 0.15)',
+            border: '1px solid rgba(139, 92, 246, 0.4)',
+            borderRadius: 10,
+            padding: '10px 16px',
+            color: '#c4b5fd',
+            fontSize: 13,
+            marginBottom: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span>↺</span>
+            <span>{replanNotice}</span>
+          </div>
+        )}
+        {replanning && (
+          <div style={{
+            background: 'rgba(139, 92, 246, 0.08)',
+            border: '1px solid rgba(139, 92, 246, 0.2)',
+            borderRadius: 10,
+            padding: '10px 16px',
+            color: '#94a3b8',
+            fontSize: 13,
+            marginBottom: 8,
+          }}>
+            Re-routing arc…
+          </div>
+        )}
 
         {/* Path visualization */}
         <div style={s.pathWrap}>
@@ -484,6 +572,7 @@ function ArcResultScreen({ arc, onReset, spotifyToken, sessionId, authToken }) {
           tracks={arc.tracks}
           spotifyToken={spotifyToken}
           onTrackChange={handleTrackChange}
+          onQuickSkip={handleQuickSkip}
         />
       )}
     </div>
