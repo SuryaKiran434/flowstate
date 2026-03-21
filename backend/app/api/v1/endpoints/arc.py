@@ -27,12 +27,14 @@ from app.core.security import get_current_user_id
 from app.db.session import get_db
 from app.models.session import Session as SessionModel, SessionTrack
 from app.services.arc_planner import ArcPlanner, EMOTION_GRAPH, ENERGY_CENTERS
+from app.services.context_seeder import ContextSeeder
 from app.services.mood_parser import MoodParser, EMOTION_DESCRIPTIONS, VALID_EMOTIONS
 
-router = APIRouter(prefix="/arc", tags=["arc"])
+router  = APIRouter(prefix="/arc", tags=["arc"])
 
 planner = ArcPlanner()
 parser  = MoodParser()
+seeder  = ContextSeeder()
 
 
 # ─── Request / Response Models ────────────────────────────────────────────────
@@ -51,6 +53,9 @@ class ArcRequest(BaseModel):
         le=180,
         description="Desired session length in minutes",
     )
+    # Optional: pre-resolved emotions (skip Claude parsing — used by context suggestion)
+    source_emotion: Optional[str] = Field(None, description="Pre-resolved source emotion (bypasses mood parsing)")
+    target_emotion: Optional[str] = Field(None, description="Pre-resolved target emotion (bypasses mood parsing)")
 
 
 class ArcPreviewRequest(BaseModel):
@@ -91,9 +96,25 @@ async def generate_arc(
     """
 
     # Step 1: Parse mood → emotions
-    mood = await parser.parse(request.mood_text)
-    source = mood["source"]
-    target = mood["target"]
+    # If source/target are pre-resolved (e.g. from context suggestion), skip Claude
+    if (
+        request.source_emotion and request.target_emotion
+        and request.source_emotion in VALID_EMOTIONS
+        and request.target_emotion in VALID_EMOTIONS
+        and request.source_emotion != request.target_emotion
+    ):
+        source = request.source_emotion
+        target = request.target_emotion
+        mood   = {
+            "source":         source,
+            "target":         target,
+            "interpretation": request.mood_text,
+            "method":         "preresolved",
+        }
+    else:
+        mood   = await parser.parse(request.mood_text)
+        source = mood["source"]
+        target = mood["target"]
 
     # Step 2 + 3 + 4: Plan arc from DB
     arc = planner.plan_from_db(
@@ -417,6 +438,29 @@ async def adjust_arc(
         "warnings":           warnings,
         "readiness":          arc["readiness"],
     }
+
+
+@router.get("/suggest")
+async def suggest_arc(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Context-aware arc suggestion — no user input required.
+
+    Analyses:
+      - Current time of day and day of week (server clock)
+      - User's recent session history (last 5 sessions)
+
+    Uses Claude to synthesise these signals into a source→target suggestion
+    with a plain-English explanation. Falls back to a time-of-day heuristic
+    when Claude is unavailable.
+
+    Returns the suggestion plus the context signals used, so the frontend
+    can show the user why this arc was chosen.
+    """
+    suggestion = await seeder.suggest(user_id=user_id, db=db)
+    return suggestion
 
 
 @router.post("/preview")

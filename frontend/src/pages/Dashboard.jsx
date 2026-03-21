@@ -175,16 +175,26 @@ function LandingScreen({ user, stats, readiness, onStart }) {
 }
 
 // ── Screen 2: Mood Input ──────────────────────────────────────────────────────
-function MoodInputScreen({ onSubmit, onBack }) {
-  const [text, setText]           = useState('')
-  const [duration, setDuration]   = useState(30)
-  const [focused, setFocused]     = useState(false)
-  const [visible, setVisible]     = useState(false)
-  const textareaRef               = useRef(null)
+function MoodInputScreen({ onSubmit, onBack, authToken }) {
+  const [text, setText]             = useState('')
+  const [duration, setDuration]     = useState(30)
+  const [focused, setFocused]       = useState(false)
+  const [visible, setVisible]       = useState(false)
+  const [suggestion, setSuggestion] = useState(null)  // context-aware arc suggestion
+  const textareaRef                 = useRef(null)
 
   useEffect(() => {
     setTimeout(() => { setVisible(true); setTimeout(() => textareaRef.current?.focus(), 400) }, 80)
   }, [])
+
+  // Fetch context-aware suggestion on mount (non-blocking)
+  useEffect(() => {
+    if (!authToken) return
+    fetch(`${API}/arc/suggest`, { headers: { Authorization: `Bearer ${authToken}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.source && d?.target) setSuggestion(d) })
+      .catch(() => {})
+  }, [authToken])
 
   const hints = [
     "I'm anxious about tomorrow, want to feel calm",
@@ -199,6 +209,72 @@ function MoodInputScreen({ onSubmit, onBack }) {
       <div style={{ ...s.inputWrap, opacity: visible ? 1 : 0, transform: visible ? 'none' : 'translateY(20px)', transition: 'all 0.7s cubic-bezier(0.16,1,0.3,1)' }}>
 
         <button onClick={onBack} style={s.backBtn}>← back</button>
+
+        {/* Context-aware suggestion card */}
+        {suggestion && (
+          <div style={{
+            background: 'rgba(139, 92, 246, 0.08)',
+            border: '1px solid rgba(139, 92, 246, 0.25)',
+            borderRadius: 14,
+            padding: '14px 18px',
+            marginBottom: 24,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 14,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
+                Suggested for you
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                <span style={{ color: EMOTION_COLORS[suggestion.source] || '#a78bfa', fontWeight: 600, fontSize: 14 }}>
+                  {EMOTION_EMOJI[suggestion.source]} {suggestion.source}
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13 }}>→</span>
+                <span style={{ color: EMOTION_COLORS[suggestion.target] || '#a78bfa', fontWeight: 600, fontSize: 14 }}>
+                  {EMOTION_EMOJI[suggestion.target]} {suggestion.target}
+                </span>
+              </div>
+              <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, lineHeight: 1.5 }}>
+                {suggestion.interpretation}
+              </div>
+              {suggestion.context_signals?.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                  {suggestion.context_signals.slice(0, 3).map(sig => (
+                    <span key={sig} style={{
+                      background: 'rgba(139, 92, 246, 0.12)',
+                      border: '1px solid rgba(139, 92, 246, 0.2)',
+                      borderRadius: 100,
+                      padding: '2px 10px',
+                      color: '#94a3b8',
+                      fontSize: 11,
+                    }}>
+                      {sig}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => onSubmit(suggestion.interpretation, duration, suggestion.source, suggestion.target)}
+              style={{
+                background: 'rgba(139, 92, 246, 0.2)',
+                border: '1px solid rgba(139, 92, 246, 0.4)',
+                borderRadius: 8,
+                color: '#c4b5fd',
+                fontSize: 12,
+                fontWeight: 600,
+                padding: '8px 14px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                fontFamily: "'DM Sans', sans-serif",
+                flexShrink: 0,
+              }}
+            >
+              Use this
+            </button>
+          </div>
+        )}
 
         <div style={s.inputHeader}>
           <div style={s.inputLabel}>How are you feeling?</div>
@@ -808,17 +884,22 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [readiness?.state])
 
-  async function handleGenerateArc(text, duration) {
+  async function handleGenerateArc(text, duration, sourceEmotion, targetEmotion) {
     setMoodText(text)
     setScreen('loading')
     setError(null)
 
     const tok = token()
+    const body = { mood_text: text, duration_minutes: duration }
+    if (sourceEmotion && targetEmotion) {
+      body.source_emotion = sourceEmotion
+      body.target_emotion = targetEmotion
+    }
     try {
       const res = await fetch(`${API}/arc/generate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mood_text: text, duration_minutes: duration }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) {
         const err = await res.json()
@@ -875,7 +956,7 @@ export default function Dashboard() {
       <ConstellationBg />
 
       {screen === 'landing' && <LandingScreen user={user} stats={stats} readiness={readiness} onStart={() => setScreen('input')} />}
-      {screen === 'input'   && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} />}
+      {screen === 'input'   && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} authToken={token()} />}
       {screen === 'loading' && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
       {screen === 'result'  && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}
 
