@@ -420,6 +420,59 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
     setPlayingIndex(newIndex)
   }, [patchSession, postTrackEvent])
 
+  // ── Mid-session natural language adjust ───────────────────────────────────
+  const [commandOpen, setCommandOpen]   = useState(false)
+  const [commandText, setCommandText]   = useState('')
+  const [adjusting, setAdjusting]       = useState(false)
+  const commandInputRef                 = useRef(null)
+
+  useEffect(() => {
+    if (commandOpen) commandInputRef.current?.focus()
+  }, [commandOpen])
+
+  const handleAdjust = useCallback(async () => {
+    if (!commandText.trim() || !sessionId || !authToken || adjusting) return
+    setAdjusting(true)
+
+    const position = playingIndex ?? 0
+    const remainingMs = arc.tracks.slice(position).reduce((s, t) => s + (t.duration_ms || 0), 0)
+    const remainingMins = Math.max(5, Math.round(remainingMs / 60000))
+
+    try {
+      const res = await fetch(`${API}/arc/adjust`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id:                 sessionId,
+          current_position:           position,
+          command:                    commandText.trim(),
+          remaining_duration_minutes: remainingMins,
+        }),
+      })
+      if (!res.ok) return
+      const newArc = await res.json()
+
+      setArc(prev => ({
+        ...prev,
+        arc_path:          newArc.arc_path,
+        segments:          newArc.segments,
+        tracks:            newArc.tracks,
+        total_tracks:      newArc.total_tracks,
+        total_duration_ms: newArc.total_duration_ms,
+      }))
+      setExpanded(null)
+      setPlayingIndex(null)
+      setReplanNotice(newArc.command_interpretation || 'Arc adjusted')
+      setTimeout(() => setReplanNotice(null), 5000)
+      setCommandText('')
+      setCommandOpen(false)
+    } catch {
+      // non-fatal
+    } finally {
+      setAdjusting(false)
+    }
+  }, [commandText, sessionId, authToken, adjusting, playingIndex, arc])
+
   return (
     <div style={{ ...s.screen, alignItems: 'flex-start', overflowY: 'auto', paddingBottom: spotifyToken ? 90 : 0 }}>
       <div style={{ ...s.arcWrap, opacity: visible ? 1 : 0, transition: 'opacity 0.6s ease' }}>
@@ -565,6 +618,92 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
           <div style={s.warning}>⚠ {arc.warnings[0]}</div>
         )}
       </div>
+
+      {/* Mid-session command bar — floats above the player when playing */}
+      {spotifyToken && playingIndex !== null && (
+        <div style={{
+          position: 'fixed',
+          bottom: commandOpen ? 86 : 76,
+          right: 24,
+          zIndex: 1001,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: 8,
+          transition: 'bottom 0.2s ease',
+        }}>
+          {commandOpen && (
+            <div style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              background: 'rgba(10, 6, 20, 0.97)',
+              border: '1px solid rgba(139, 92, 246, 0.4)',
+              borderRadius: 12,
+              padding: '8px 12px',
+              backdropFilter: 'blur(20px)',
+              boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+              width: 340,
+            }}>
+              <input
+                ref={commandInputRef}
+                value={commandText}
+                onChange={e => setCommandText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAdjust(); if (e.key === 'Escape') setCommandOpen(false) }}
+                placeholder="Adjust arc... e.g. "slow this down""
+                style={{
+                  flex: 1,
+                  background: 'none',
+                  border: 'none',
+                  outline: 'none',
+                  color: '#e2e8f0',
+                  fontSize: 13,
+                  fontFamily: "'DM Sans', sans-serif",
+                }}
+                disabled={adjusting}
+              />
+              <button
+                onClick={handleAdjust}
+                disabled={adjusting || !commandText.trim()}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: adjusting || !commandText.trim() ? 'default' : 'pointer',
+                  color: adjusting || !commandText.trim() ? '#475569' : '#a78bfa',
+                  fontSize: 16,
+                  padding: 0,
+                  lineHeight: 1,
+                }}
+              >
+                {adjusting ? '…' : '↵'}
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => setCommandOpen(o => !o)}
+            title="Adjust arc with natural language"
+            style={{
+              background: commandOpen
+                ? 'rgba(139, 92, 246, 0.25)'
+                : 'rgba(10, 6, 20, 0.9)',
+              border: '1px solid rgba(139, 92, 246, 0.4)',
+              borderRadius: '50%',
+              width: 36,
+              height: 36,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              color: '#a78bfa',
+              fontSize: 16,
+              backdropFilter: 'blur(12px)',
+              transition: 'background 0.2s',
+            }}
+          >
+            ✦
+          </button>
+        </div>
+      )}
 
       {spotifyToken && (
         <SpotifyPlayer

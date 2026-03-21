@@ -64,6 +64,13 @@ class ReplanRequest(BaseModel):
     remaining_duration_minutes: int  = Field(default=20, ge=1, le=120)
 
 
+class AdjustRequest(BaseModel):
+    session_id:                UUID
+    current_position:          int   = Field(..., ge=0)
+    command:                   str   = Field(..., min_length=1, max_length=300, description="Natural language arc adjustment")
+    remaining_duration_minutes: int  = Field(default=20, ge=1, le=120)
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/generate")
@@ -280,6 +287,127 @@ async def replan_arc(
         # Arc structure (same schema as /arc/generate)
         "source_emotion":     replan_source,
         "target_emotion":     target_emotion,
+        "arc_path":           arc["arc_path"],
+        "segments":           [serialize_segment(s) for s in arc["segments"]],
+        "tracks":             [serialize_track(t) for t in arc["tracks"]],
+        "total_tracks":       arc["total_tracks"],
+        "total_duration_ms":  arc["total_duration_ms"],
+        "duration_minutes":   request.remaining_duration_minutes,
+        "warnings":           warnings,
+        "readiness":          arc["readiness"],
+    }
+
+
+@router.post("/adjust")
+async def adjust_arc(
+    request: AdjustRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Mid-session natural language arc adjustment.
+
+    Flow:
+      1. Load session + current position's emotion label (ownership check)
+      2. Parse the user's natural language command via Claude → new target emotion
+      3. Load track pool excluding already-seen tracks
+      4. Re-plan arc from current emotion to the new target
+      5. Return same format as /arc/generate + command_interpretation
+    """
+    # ── 1. Session context ────────────────────────────────────────────────────
+    session = db.query(SessionModel).filter(
+        SessionModel.id == request.session_id,
+        SessionModel.user_id == user_id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session_tracks = (
+        db.query(SessionTrack)
+        .filter(SessionTrack.session_id == request.session_id)
+        .order_by(SessionTrack.position)
+        .all()
+    )
+
+    current_st = next(
+        (t for t in session_tracks if t.position == request.current_position), None
+    )
+    current_emotion = (
+        current_st.emotion_label
+        if current_st and current_st.emotion_label
+        else session.source_emotion
+    )
+
+    # ── 2. Parse command → new target ─────────────────────────────────────────
+    adjustment = await parser.parse_adjustment(
+        current_emotion=current_emotion,
+        current_target=session.target_emotion,
+        command=request.command,
+    )
+    new_target = adjustment["new_target"]
+
+    # Ensure source ≠ target
+    if new_target == current_emotion:
+        new_target = session.target_emotion
+
+    # ── 3. Exclude already-seen tracks ────────────────────────────────────────
+    excluded_ids = {t.track_id for t in session_tracks if t.position <= request.current_position}
+
+    # ── 4. Re-plan ────────────────────────────────────────────────────────────
+    arc = planner.plan_from_db(
+        source=current_emotion,
+        target=new_target,
+        duration_minutes=request.remaining_duration_minutes,
+        db=db,
+        user_id=user_id,
+        excluded_spotify_ids=excluded_ids,
+    )
+
+    if arc.get("error") == "library_not_ready":
+        raise HTTPException(status_code=202, detail={
+            "error":   "library_not_ready",
+            "message": arc["message"],
+        })
+
+    warnings = []
+    if arc["readiness"]["has_gaps"]:
+        missing = arc["readiness"]["missing_emotions"]
+        warnings.append(
+            f"No tracks found for: {', '.join(missing)}. "
+            "These segments were skipped."
+        )
+
+    def serialize_track(t) -> dict:
+        return {
+            "spotify_id":         t.spotify_id,
+            "title":              t.title,
+            "artist":             t.artist,
+            "duration_ms":        t.duration_ms,
+            "emotion_label":      t.emotion_label,
+            "emotion_confidence": t.emotion_confidence,
+            "energy":             t.energy,
+            "valence":            t.valence,
+            "tempo":              t.tempo,
+        }
+
+    def serialize_segment(seg) -> dict:
+        return {
+            "emotion":          seg["emotion"],
+            "segment_index":    seg["segment_index"],
+            "energy_direction": seg["energy_direction"],
+            "track_count":      seg["track_count"],
+            "tracks":           [serialize_track(t) for t in seg["tracks"]],
+        }
+
+    return {
+        # Command context
+        "command":               request.command,
+        "command_interpretation": adjustment["interpretation"],
+        "parse_method":          adjustment["method"],
+
+        # Arc structure (same schema as /arc/generate)
+        "source_emotion":     current_emotion,
+        "target_emotion":     new_target,
         "arc_path":           arc["arc_path"],
         "segments":           [serialize_segment(s) for s in arc["segments"]],
         "tracks":             [serialize_track(t) for t in arc["tracks"]],
