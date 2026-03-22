@@ -66,6 +66,7 @@ class TrackCandidate:
     energy: float
     valence: float
     tempo: float
+    language: str = "en"   # BCP-47-style code inferred from Unicode script
 
 
 @dataclass(order=True)
@@ -106,8 +107,11 @@ class ArcPlanner:
         """
         Load all classified tracks for a user from the DB in one query.
         Returns a list of TrackCandidate objects ready for arc planning.
+        Language is inferred on-the-fly from the track title + artist via
+        Unicode script detection (no DB column required).
         """
         from sqlalchemy import text
+        from app.services.language_detector import detect as detect_language
 
         rows = db.execute(text("""
             SELECT
@@ -140,6 +144,7 @@ class ArcPlanner:
                 energy=r.energy or 0.5,
                 valence=r.valence or 0.5,
                 tempo=r.tempo_librosa or 120.0,
+                language=detect_language(r.name or "", r.artist_names or ""),
             )
             for r in rows
             if r.emotion_label is not None and r.spotify_id not in excluded
@@ -154,14 +159,23 @@ class ArcPlanner:
         user_id: str,
         excluded_spotify_ids: Optional[set] = None,
         fixed_arc_path: Optional[list[str]] = None,
+        language_filter: Optional[list[str]] = None,
     ) -> dict:
         """
         Production entry point. Loads track pool from DB then plans the arc.
-        Optionally excludes already-played tracks (for mid-session re-planning).
+
+        language_filter — optional list of BCP-47 language codes (e.g. ['en', 'hi']).
+          When provided, only tracks whose detected language matches are used.
+          The classifier is language-agnostic (audio features only), so emotional
+          coherence is preserved regardless of language mix.
         """
         track_pool = self.load_track_pool_from_db(
             db, user_id, excluded_spotify_ids=excluded_spotify_ids
         )
+
+        if language_filter:
+            langs = {lang.lower() for lang in language_filter}
+            track_pool = [t for t in track_pool if t.language in langs]
 
         if not track_pool:
             return {

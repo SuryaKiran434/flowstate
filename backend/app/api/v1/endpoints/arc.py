@@ -48,6 +48,7 @@ def _serialize_track(t) -> dict:
         "energy":             t.energy,
         "valence":            t.valence,
         "tempo":              t.tempo,
+        "language":           getattr(t, "language", "en"),
     }
 
 
@@ -120,6 +121,12 @@ class ArcRequest(BaseModel):
     target_emotion: Optional[str] = Field(
         None, description="Pre-resolved target — bypasses mood parsing"
     )
+    # Optional language filter — only use tracks in these languages.
+    # The emotion classifier is language-agnostic (audio features only), so
+    # emotional coherence is preserved regardless of which languages are selected.
+    language_filter: Optional[list[str]] = Field(
+        None, description="BCP-47 language codes to include, e.g. ['en', 'hi', 'te']"
+    )
 
 
 class ArcPreviewRequest(BaseModel):
@@ -186,13 +193,14 @@ async def generate_arc(
     # Step 2 — personalised planner
     req_planner, personalised = _get_planner(user_id, db)
 
-    # Step 3 — plan
+    # Step 3 — plan (with optional language filter)
     arc = req_planner.plan_from_db(
         source=source,
         target=target,
         duration_minutes=request.duration_minutes,
         db=db,
         user_id=user_id,
+        language_filter=request.language_filter or None,
     )
 
     if arc.get("error") == "library_not_ready":

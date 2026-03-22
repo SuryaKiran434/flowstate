@@ -279,6 +279,55 @@ def get_model_status(
     }
 
 
+@router.get("/language-stats")
+def get_language_stats(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the language distribution of the user's classified track library.
+
+    Language is inferred on-the-fly from track title + artist using Unicode
+    script detection — no additional DB column required.  The emotion classifier
+    is inherently language-agnostic (it operates on raw audio features), so
+    tracks in any language can participate in emotionally coherent arcs.
+    """
+    from app.services.language_detector import detect as detect_language, LANGUAGE_NAMES, LANGUAGE_FLAGS
+    from collections import Counter
+
+    rows = db.execute(text("""
+        SELECT t.name, t.artist_names
+        FROM user_tracks ut
+        JOIN tracks t ON ut.track_id = t.id
+        JOIN track_features tf ON t.id = tf.track_id
+        WHERE ut.user_id = cast(:uid as uuid)
+          AND tf.emotion_label IS NOT NULL
+    """), {"uid": user_id}).fetchall()
+
+    counts: Counter = Counter()
+    for r in rows:
+        lang = detect_language(r.name or "", r.artist_names or "")
+        counts[lang] += 1
+
+    total = sum(counts.values())
+    distribution = [
+        {
+            "language":   lang,
+            "name":       LANGUAGE_NAMES.get(lang, lang.upper()),
+            "flag":       LANGUAGE_FLAGS.get(lang, "🌐"),
+            "count":      count,
+            "percentage": round(count / total * 100, 1) if total else 0,
+        }
+        for lang, count in counts.most_common()
+    ]
+    return {
+        "total_classified":  total,
+        "language_count":    len(counts),
+        "multilingual":      len(counts) > 1,
+        "distribution":      distribution,
+    }
+
+
 @router.post("/reclassify")
 def reclassify_library(
     user_id: str = Depends(get_current_user_id),

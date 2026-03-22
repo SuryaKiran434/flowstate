@@ -224,7 +224,7 @@ function InsightsPanel({ insights }) {
 }
 
 // ── Screen 1: Landing ─────────────────────────────────────────────────────────
-function LandingScreen({ user, stats, readiness, modelStatus, insights, onStart, onDiscover, onCollab, onReclassify }) {
+function LandingScreen({ user, stats, readiness, modelStatus, insights, langStats, onStart, onDiscover, onCollab, onReclassify }) {
   const [reclassifying, setReclassifying] = useState(false)
   async function _reclassify() {
     setReclassifying(true)
@@ -393,6 +393,24 @@ function LandingScreen({ user, stats, readiness, modelStatus, insights, onStart,
           </div>
         )}
 
+        {/* Language distribution — only shown when library is multilingual */}
+        {langStats && langStats.multilingual && (
+          <div style={{ marginTop: 20 }}>
+            <div style={s.sectionLabel}>
+              Languages · {langStats.language_count} detected · classifier is language-agnostic
+            </div>
+            <div style={s.emotionPills}>
+              {langStats.distribution.slice(0, 8).map(l => (
+                <div key={l.language} style={{ ...s.emotionPill, borderColor: 'rgba(139,92,246,0.35)', background: 'rgba(139,92,246,0.08)' }}>
+                  <span>{l.flag}</span>
+                  <span style={{ color: 'rgba(255,255,255,0.75)', fontWeight: 600, fontSize: '13px' }}>{l.name}</span>
+                  <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '12px' }}>{l.percentage}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Insights panel — only shown when user has sessions */}
         {insights && insights.total_sessions > 0 && (
           <InsightsPanel insights={insights} />
@@ -409,18 +427,25 @@ function MoodInputScreen({ onSubmit, onBack, authToken }) {
   const [focused, setFocused]       = useState(false)
   const [visible, setVisible]       = useState(false)
   const [suggestion, setSuggestion] = useState(null)  // context-aware arc suggestion
+  const [langFilter, setLangFilter] = useState([])    // language filter (empty = all)
+  const [langStats, setLangStats]   = useState(null)
   const textareaRef                 = useRef(null)
 
   useEffect(() => {
     setTimeout(() => { setVisible(true); setTimeout(() => textareaRef.current?.focus(), 400) }, 80)
   }, [])
 
-  // Fetch context-aware suggestion on mount (non-blocking)
+  // Fetch context-aware suggestion + language stats on mount (non-blocking)
   useEffect(() => {
     if (!authToken) return
-    fetch(`${API}/arc/suggest`, { headers: { Authorization: `Bearer ${authToken}` } })
+    const hdrs = { Authorization: `Bearer ${authToken}` }
+    fetch(`${API}/arc/suggest`, { headers: hdrs })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.source && d?.target) setSuggestion(d) })
+      .catch(() => {})
+    fetch(`${API}/tracks/language-stats`, { headers: hdrs })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.multilingual) setLangStats(d) })
       .catch(() => {})
   }, [authToken])
 
@@ -484,7 +509,7 @@ function MoodInputScreen({ onSubmit, onBack, authToken }) {
               )}
             </div>
             <button
-              onClick={() => onSubmit(suggestion.interpretation, duration, suggestion.source, suggestion.target)}
+              onClick={() => onSubmit(suggestion.interpretation, duration, suggestion.source, suggestion.target, langFilter.length ? langFilter : null)}
               style={{
                 background: 'rgba(139, 92, 246, 0.2)',
                 border: '1px solid rgba(139, 92, 246, 0.4)',
@@ -553,8 +578,44 @@ function MoodInputScreen({ onSubmit, onBack, authToken }) {
           </div>
         </div>
 
+        {/* Language filter — only shown for multilingual libraries */}
+        {langStats && (
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>
+              Language filter · classifier is language-agnostic
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {langStats.distribution.map(l => {
+                const active = langFilter.includes(l.language)
+                return (
+                  <button key={l.language} onClick={() => {
+                    setLangFilter(prev =>
+                      prev.includes(l.language)
+                        ? prev.filter(x => x !== l.language)
+                        : [...prev, l.language]
+                    )
+                  }} style={{
+                    background: active ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${active ? 'rgba(139,92,246,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                    color: active ? '#c4b5fd' : 'rgba(255,255,255,0.45)',
+                    borderRadius: 100, padding: '5px 14px', fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    {l.flag} {l.name} <span style={{ opacity: 0.6, marginLeft: 2 }}>{l.percentage}%</span>
+                  </button>
+                )
+              })}
+            </div>
+            {langFilter.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(139,92,246,0.7)' }}>
+                Filtering to {langFilter.length} language{langFilter.length > 1 ? 's' : ''} · {langStats.distribution.filter(l => langFilter.includes(l.language)).reduce((s, l) => s + l.count, 0)} tracks
+              </div>
+            )}
+          </div>
+        )}
+
         <button
-          onClick={() => text.trim().length > 3 && onSubmit(text, duration)}
+          onClick={() => text.trim().length > 3 && onSubmit(text, duration, null, null, langFilter.length ? langFilter : null)}
           disabled={text.trim().length < 4}
           className="generate-btn"
           style={{ ...s.generateBtn, opacity: text.trim().length < 4 ? 0.4 : 1, cursor: text.trim().length < 4 ? 'not-allowed' : 'pointer' }}
@@ -986,6 +1047,17 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
                           <div style={s.trackArtist}>{track.artist}</div>
                         </div>
                         <div style={s.trackMeta}>
+                          {track.language && track.language !== 'en' && (
+                            <span style={{
+                              fontSize: 10, color: 'rgba(255,255,255,0.35)',
+                              background: 'rgba(255,255,255,0.06)',
+                              border: '1px solid rgba(255,255,255,0.1)',
+                              borderRadius: 4, padding: '1px 6px',
+                              letterSpacing: '0.05em', flexShrink: 0,
+                            }}>
+                              {track.language.toUpperCase()}
+                            </span>
+                          )}
                           <div style={s.energyBar}>
                             <div style={{ ...s.energyFill, width: `${track.energy * 100}%`, background: EMOTION_COLORS[track.emotion_label] }} />
                           </div>
@@ -1630,6 +1702,7 @@ export default function Dashboard() {
   const [modelStatus, setModelStatus]   = useState(null)
   const [reclassifyMsg, setReclassifyMsg] = useState(null)
   const [insights, setInsights]         = useState(null)
+  const [langStats, setLangStats]       = useState(null)
   const navigate                  = useNavigate()
   const [searchParams]            = useSearchParams()
 
@@ -1658,18 +1731,20 @@ export default function Dashboard() {
       .then(d => { if (d?.access_token) setSpotifyToken(d.access_token) })
       .catch(() => {})
 
-    // Load stats + emotion distribution + readiness + model status + insights in parallel
+    // Load stats + emotions + readiness + model status + insights + language stats in parallel
     Promise.all([
       fetch(`${API}/tracks/stats`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/emotions`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/readiness`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/model-status`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch(`${API}/arc/insights`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([statsData, emotionData, readinessData, modelData, insightsData]) => {
+      fetch(`${API}/tracks/language-stats`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([statsData, emotionData, readinessData, modelData, insightsData, langData]) => {
       setStats({ ...statsData, distribution: emotionData.distribution })
       setReadiness(readinessData)
       setModelStatus(modelData)
       setInsights(insightsData)
+      setLangStats(langData)
       // Pick a peaceful/neutral track for the loading screen
       const peaceful = emotionData.distribution?.find(e => e.emotion_label === 'peaceful')
       if (peaceful) {
@@ -1733,7 +1808,7 @@ export default function Dashboard() {
     }
   }
 
-  async function handleGenerateArc(text, duration, sourceEmotion, targetEmotion) {
+  async function handleGenerateArc(text, duration, sourceEmotion, targetEmotion, languageFilter) {
     setMoodText(text)
     setScreen('loading')
     setError(null)
@@ -1743,6 +1818,9 @@ export default function Dashboard() {
     if (sourceEmotion && targetEmotion) {
       body.source_emotion = sourceEmotion
       body.target_emotion = targetEmotion
+    }
+    if (languageFilter?.length) {
+      body.language_filter = languageFilter
     }
     try {
       const res = await fetch(`${API}/arc/generate`, {
@@ -1804,7 +1882,7 @@ export default function Dashboard() {
       <style>{dashCss}</style>
       <ConstellationBg />
 
-      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} modelStatus={modelStatus} insights={insights} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} onCollab={() => setScreen('collab')} onReclassify={handleReclassify} />}
+      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} modelStatus={modelStatus} insights={insights} langStats={langStats} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} onCollab={() => setScreen('collab')} onReclassify={handleReclassify} />}
       {screen === 'input'    && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} authToken={token()} />}
       {screen === 'loading'  && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
       {screen === 'result'   && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}
