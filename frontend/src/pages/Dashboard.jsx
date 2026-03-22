@@ -111,8 +111,120 @@ function ConstellationBg() {
   return <canvas ref={canvasRef} style={{ position:'fixed', inset:0, zIndex:0, pointerEvents:'none' }} />
 }
 
+// ── Insights Panel ────────────────────────────────────────────────────────────
+function InsightsPanel({ insights }) {
+  const {
+    streak_days, completion_rate, total_sessions, completed_sessions,
+    top_starting_emotions, recent_arcs,
+  } = insights
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.02)',
+      border: '1px solid rgba(255,255,255,0.07)',
+      borderRadius: 16,
+      padding: '18px 20px',
+      marginTop: 20,
+    }}>
+      <div style={s.sectionLabel}>Your listening patterns</div>
+
+      {/* Summary stats row */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        {streak_days > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)',
+            borderRadius: 8, padding: '6px 12px', fontSize: 12,
+          }}>
+            <span style={{ fontSize: 15 }}>🔥</span>
+            <span style={{ color: '#c4b5fd', fontWeight: 600 }}>{streak_days}-day streak</span>
+          </div>
+        )}
+        {total_sessions > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)',
+            borderRadius: 8, padding: '6px 12px', fontSize: 12,
+          }}>
+            <span style={{ color: '#67e8f9', fontWeight: 600 }}>
+              {Math.round(completion_rate * 100)}% completion
+            </span>
+            <span style={{ color: 'rgba(255,255,255,0.3)' }}>
+              · {completed_sessions}/{total_sessions} sessions
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Top starting emotions */}
+      {top_starting_emotions.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Most common starting emotions
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {top_starting_emotions.slice(0, 5).map(e => (
+              <div key={e.emotion} style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                background: (EMOTION_COLORS[e.emotion] || '#8b5cf6') + '14',
+                border: `1px solid ${(EMOTION_COLORS[e.emotion] || '#8b5cf6')}40`,
+                borderRadius: 6, padding: '4px 10px', fontSize: 11,
+              }}>
+                <span>{EMOTION_EMOJI[e.emotion] || '◉'}</span>
+                <span style={{ color: EMOTION_COLORS[e.emotion] || '#c4b5fd', fontWeight: 600 }}>
+                  {e.emotion}
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.3)' }}>{e.pct}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent arcs timeline */}
+      {recent_arcs.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Recent arcs
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {recent_arcs.slice(0, 4).map(r => (
+              <div key={r.session_id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 8, fontSize: 11, color: 'rgba(255,255,255,0.5)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                    background: r.status === 'completed' ? '#10b981' : '#475569',
+                  }} />
+                  <span style={{ color: EMOTION_COLORS[r.source_emotion] || '#c4b5fd', fontWeight: 600 }}>
+                    {r.source_emotion}
+                  </span>
+                  <span style={{ color: 'rgba(255,255,255,0.25)' }}>→</span>
+                  <span style={{ color: EMOTION_COLORS[r.target_emotion] || '#c4b5fd', fontWeight: 600 }}>
+                    {r.target_emotion}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  {r.duration_mins && (
+                    <span>{r.duration_mins} min</span>
+                  )}
+                  <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: 10 }}>
+                    {r.date}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Screen 1: Landing ─────────────────────────────────────────────────────────
-function LandingScreen({ user, stats, readiness, modelStatus, onStart, onDiscover, onReclassify }) {
+function LandingScreen({ user, stats, readiness, modelStatus, insights, onStart, onDiscover, onReclassify }) {
   const [reclassifying, setReclassifying] = useState(false)
   async function _reclassify() {
     setReclassifying(true)
@@ -265,6 +377,11 @@ function LandingScreen({ user, stats, readiness, modelStatus, onStart, onDiscove
               ))}
             </div>
           </div>
+        )}
+
+        {/* Insights panel — only shown when user has sessions */}
+        {insights && insights.total_sessions > 0 && (
+          <InsightsPanel insights={insights} />
         )}
       </div>
     </div>
@@ -908,7 +1025,7 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
                 value={commandText}
                 onChange={e => setCommandText(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleAdjust(); if (e.key === 'Escape') setCommandOpen(false) }}
-                placeholder="Adjust arc... e.g. "slow this down""
+                placeholder="Adjust arc... e.g. 'slow this down'"
                 style={{
                   flex: 1,
                   background: 'none',
@@ -1201,6 +1318,7 @@ export default function Dashboard() {
   const [spotifyToken, setSpotifyToken] = useState(null)
   const [modelStatus, setModelStatus]   = useState(null)
   const [reclassifyMsg, setReclassifyMsg] = useState(null)
+  const [insights, setInsights]         = useState(null)
   const navigate                  = useNavigate()
   const [searchParams]            = useSearchParams()
 
@@ -1229,16 +1347,18 @@ export default function Dashboard() {
       .then(d => { if (d?.access_token) setSpotifyToken(d.access_token) })
       .catch(() => {})
 
-    // Load stats + emotion distribution + readiness + model status in parallel
+    // Load stats + emotion distribution + readiness + model status + insights in parallel
     Promise.all([
       fetch(`${API}/tracks/stats`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/emotions`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/readiness`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/model-status`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([statsData, emotionData, readinessData, modelData]) => {
+      fetch(`${API}/arc/insights`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([statsData, emotionData, readinessData, modelData, insightsData]) => {
       setStats({ ...statsData, distribution: emotionData.distribution })
       setReadiness(readinessData)
       setModelStatus(modelData)
+      setInsights(insightsData)
       // Pick a peaceful/neutral track for the loading screen
       const peaceful = emotionData.distribution?.find(e => e.emotion_label === 'peaceful')
       if (peaceful) {
@@ -1283,16 +1403,18 @@ export default function Dashboard() {
       const data = await res.json()
       setReclassifyMsg(`${data.updated} tracks reclassified with ML model`)
       setTimeout(() => setReclassifyMsg(null), 5000)
-      // Refresh stats + emotions + readiness + model status
+      // Refresh stats + emotions + readiness + model status + insights
       Promise.all([
         fetch(`${API}/tracks/stats`, { headers: hdrs }).then(r => r.json()),
         fetch(`${API}/tracks/emotions`, { headers: hdrs }).then(r => r.json()),
         fetch(`${API}/tracks/readiness`, { headers: hdrs }).then(r => r.json()),
         fetch(`${API}/tracks/model-status`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
-      ]).then(([s, e, r, m]) => {
+        fetch(`${API}/arc/insights`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]).then(([s, e, r, m, ins]) => {
         setStats({ ...s, distribution: e.distribution })
         setReadiness(r)
         setModelStatus(m)
+        setInsights(ins)
       }).catch(() => {})
     } catch {
       setError('Reclassification failed — is the model trained?')
@@ -1371,7 +1493,7 @@ export default function Dashboard() {
       <style>{dashCss}</style>
       <ConstellationBg />
 
-      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} modelStatus={modelStatus} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} onReclassify={handleReclassify} />}
+      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} modelStatus={modelStatus} insights={insights} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} onReclassify={handleReclassify} />}
       {screen === 'input'    && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} authToken={token()} />}
       {screen === 'loading'  && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
       {screen === 'result'   && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}

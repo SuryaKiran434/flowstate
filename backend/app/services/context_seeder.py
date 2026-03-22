@@ -29,6 +29,7 @@ import httpx
 
 from app.core.config import get_settings
 from app.services.mood_parser import VALID_EMOTIONS, EMOTION_DESCRIPTIONS
+from app.services.longitudinal_analyzer import LongitudinalAnalyzer
 
 # ── Time-of-day buckets ───────────────────────────────────────────────────────
 
@@ -90,6 +91,7 @@ class ContextSeeder:
     def __init__(self):
         self.settings = get_settings()
         self.api_url  = "https://api.anthropic.com/v1/messages"
+        self._analyzer = LongitudinalAnalyzer()
 
     async def suggest(self, user_id: str, db) -> dict:
         """
@@ -103,6 +105,9 @@ class ContextSeeder:
 
         recent_sessions = self._load_recent_sessions(db, user_id)
 
+        # Longitudinal pattern: dominant source emotion for this time slot
+        slot_pattern = self._analyzer.get_time_slot_pattern(user_id, db, time_label)
+
         context_signals = [time_label, day_label]
         if is_weekend:
             context_signals.append("weekend")
@@ -110,17 +115,24 @@ class ContextSeeder:
             context_signals.append(
                 f"recent session: {s['source']}→{s['target']} ({s['status']})"
             )
+        if slot_pattern:
+            context_signals.append(
+                f"historical pattern: usually starts {time_label} with {slot_pattern['source']}"
+                f" ({slot_pattern['count']} times)"
+            )
 
         if self.settings.anthropic_api_key:
             try:
-                result = await self._call_claude(now, day_label, time_label, recent_sessions)
+                result = await self._call_claude(
+                    now, day_label, time_label, recent_sessions, slot_pattern
+                )
                 result["context_signals"] = context_signals
                 result["method"] = "claude"
                 return result
             except Exception as e:
                 print(f"Context seeder Claude call failed: {e} — using heuristic fallback")
 
-        return self._heuristic(time_label, recent_sessions, context_signals)
+        return self._heuristic(time_label, recent_sessions, context_signals, slot_pattern)
 
     # ── DB helpers ────────────────────────────────────────────────────────────
 
@@ -159,6 +171,7 @@ class ContextSeeder:
         day_label: str,
         time_label: str,
         recent_sessions: list[dict],
+        slot_pattern: dict | None = None,
     ) -> dict:
         context_lines = [
             f"Current time: {now.strftime('%H:%M')} ({time_label})",
@@ -171,6 +184,11 @@ class ContextSeeder:
                 context_lines.append(f"  - {s['source']} → {s['target']} [{s['status']}{dur}]")
         else:
             context_lines.append("No recent session history.")
+        if slot_pattern:
+            context_lines.append(
+                f"Historical pattern: this user most often starts {time_label} sessions"
+                f" from '{slot_pattern['source']}' ({slot_pattern['count']} times)."
+            )
 
         context = "\n".join(context_lines)
 
@@ -224,8 +242,13 @@ class ContextSeeder:
         time_label: str,
         recent_sessions: list[dict],
         context_signals: list[str],
+        slot_pattern: dict | None = None,
     ) -> dict:
         source, target = _TIME_HEURISTICS.get(time_label, ("neutral", "peaceful"))
+
+        # Use longitudinal pattern if confident enough
+        if slot_pattern and slot_pattern["source"] in VALID_EMOTIONS:
+            source = slot_pattern["source"]
 
         # If the last session ended at a high-energy target, wind down from there
         if recent_sessions:

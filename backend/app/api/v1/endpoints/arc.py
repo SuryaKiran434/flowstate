@@ -23,14 +23,16 @@ from app.models.session import Session as SessionModel, SessionTrack
 from app.services.arc_planner import ArcPlanner, EMOTION_GRAPH, ENERGY_CENTERS
 from app.services.context_seeder import ContextSeeder
 from app.services.graph_learner import GraphLearner
+from app.services.longitudinal_analyzer import LongitudinalAnalyzer
 from app.services.mood_parser import MoodParser, EMOTION_DESCRIPTIONS, VALID_EMOTIONS
 
-router  = APIRouter(prefix="/arc", tags=["arc"])
+router   = APIRouter(prefix="/arc", tags=["arc"])
 
-planner = ArcPlanner()
-parser  = MoodParser()
-seeder  = ContextSeeder()
-learner = GraphLearner()
+planner  = ArcPlanner()
+parser   = MoodParser()
+seeder   = ContextSeeder()
+learner  = GraphLearner()
+analyzer = LongitudinalAnalyzer()
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -450,3 +452,19 @@ def get_valid_emotions(
         ],
         "total": len(VALID_EMOTIONS),
     }
+
+
+@router.get("/insights")
+def get_listening_insights(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Return longitudinal listening patterns derived from the user's session history.
+
+    Includes completion rate, streak, top starting emotions, most-travelled arc
+    pairs, per-time-slot dominant source emotion, and a recent arc timeline.
+
+    Returns empty/zero values when the user has no sessions — never raises.
+    """
+    return analyzer.get_insights(user_id, db)
