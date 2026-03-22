@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+import os
+
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Optional
 
 from app.core.security import get_current_user_id
 from app.db.session import get_db
+from app.services.emotion_classifier import EmotionClassifier, _DEFAULT_MODEL_PATH
+from app.services.reclassify_service import ModelNotAvailableError, ReclassifyService
+
+_reclassifier = ReclassifyService()
 
 router = APIRouter(prefix="/tracks", tags=["tracks"])
 
@@ -248,3 +254,51 @@ def get_arc_pool(
         "tracks": [dict(r._mapping) for r in rows],
         "count":  len(rows),
     }
+
+
+@router.get("/model-status")
+def get_model_status(
+    user_id: str = Depends(get_current_user_id),  # noqa: ARG001 — auth gate only
+):
+    """
+    Return metadata about the trained emotion classifier.
+
+    Reads the JSON sidecar written by train_classifier.py — no DB call required.
+    The endpoint is always safe to call: returns available=False when no model exists.
+    """
+    meta             = EmotionClassifier.load_meta()
+    model_available  = bool(meta) and os.path.exists(_DEFAULT_MODEL_PATH)
+    return {
+        "model_available": model_available,
+        "trained_at":      meta.get("trained_at"),
+        "macro_f1":        meta.get("macro_f1"),
+        "macro_f1_std":    meta.get("macro_f1_std"),
+        "n_samples":       meta.get("n_samples"),
+        "per_class_f1":    meta.get("per_class_f1"),
+        "can_reclassify":  model_available,
+    }
+
+
+@router.post("/reclassify")
+def reclassify_library(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Apply the trained emotion classifier to all tracks in the user's library
+    that have extracted audio features (mfcc_mean IS NOT NULL).
+
+    Overwrites existing emotion_label + emotion_confidence values with model
+    predictions. Tracks without extracted features are skipped.
+
+    Returns counts and the new label distribution so the frontend can refresh
+    the emotion-distribution display without a separate stats call.
+    """
+    try:
+        result = _reclassifier.reclassify_user_library(user_id, db)
+    except ModelNotAvailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return {"status": "completed", **result}

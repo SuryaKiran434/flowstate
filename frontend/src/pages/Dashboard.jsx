@@ -112,7 +112,12 @@ function ConstellationBg() {
 }
 
 // ── Screen 1: Landing ─────────────────────────────────────────────────────────
-function LandingScreen({ user, stats, readiness, onStart, onDiscover }) {
+function LandingScreen({ user, stats, readiness, modelStatus, onStart, onDiscover, onReclassify }) {
+  const [reclassifying, setReclassifying] = useState(false)
+  async function _reclassify() {
+    setReclassifying(true)
+    try { await onReclassify?.() } finally { setReclassifying(false) }
+  }
   const [visible, setVisible] = useState(false)
   useEffect(() => { setTimeout(() => setVisible(true), 80) }, [])
 
@@ -187,6 +192,62 @@ function LandingScreen({ user, stats, readiness, onStart, onDiscover }) {
                 <div style={s.statLabel}>{label}</div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ML Classifier status */}
+        {modelStatus && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: 12, flexWrap: 'wrap',
+            background: modelStatus.model_available
+              ? 'rgba(16,185,129,0.06)' : 'rgba(255,255,255,0.03)',
+            border: `1px solid ${modelStatus.model_available ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: 12,
+            padding: '10px 16px',
+            marginBottom: 16,
+            fontSize: 12,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0, display: 'inline-block',
+                background: modelStatus.model_available ? '#10b981' : '#475569',
+                boxShadow: modelStatus.model_available ? '0 0 8px #10b981' : 'none',
+              }} />
+              <span style={{ color: modelStatus.model_available ? '#6ee7b7' : 'rgba(255,255,255,0.35)', fontWeight: 600 }}>
+                ML Classifier
+              </span>
+              {modelStatus.model_available ? (
+                <span style={{ color: 'rgba(255,255,255,0.4)' }}>
+                  F1 {modelStatus.macro_f1?.toFixed(2)}
+                  {' · '}{modelStatus.n_samples?.toLocaleString()} samples
+                  {modelStatus.macro_f1 >= 0.75 ? ' · ✓ target met' : ''}
+                </span>
+              ) : (
+                <span style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  No model trained — run <code style={{ fontSize: 11 }}>train_classifier.py</code>
+                </span>
+              )}
+            </div>
+            {modelStatus.can_reclassify && (
+              <button
+                onClick={_reclassify}
+                disabled={reclassifying}
+                style={{
+                  background: 'rgba(16,185,129,0.12)',
+                  border: '1px solid rgba(16,185,129,0.3)',
+                  color: '#34d399',
+                  borderRadius: 8,
+                  padding: '5px 14px',
+                  fontSize: 11,
+                  cursor: reclassifying ? 'default' : 'pointer',
+                  fontFamily: "'DM Sans', sans-serif",
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {reclassifying ? 'Reclassifying…' : 'Reclassify library'}
+              </button>
+            )}
           </div>
         )}
 
@@ -1138,6 +1199,8 @@ export default function Dashboard() {
   const [waitTrack, setWaitTrack]     = useState(null)
   const [error, setError]             = useState(null)
   const [spotifyToken, setSpotifyToken] = useState(null)
+  const [modelStatus, setModelStatus]   = useState(null)
+  const [reclassifyMsg, setReclassifyMsg] = useState(null)
   const navigate                  = useNavigate()
   const [searchParams]            = useSearchParams()
 
@@ -1166,14 +1229,16 @@ export default function Dashboard() {
       .then(d => { if (d?.access_token) setSpotifyToken(d.access_token) })
       .catch(() => {})
 
-    // Load stats + emotion distribution + readiness in parallel
+    // Load stats + emotion distribution + readiness + model status in parallel
     Promise.all([
       fetch(`${API}/tracks/stats`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/emotions`, { headers: hdrs }).then(r => r.json()),
       fetch(`${API}/tracks/readiness`, { headers: hdrs }).then(r => r.json()),
-    ]).then(([statsData, emotionData, readinessData]) => {
+      fetch(`${API}/tracks/model-status`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([statsData, emotionData, readinessData, modelData]) => {
       setStats({ ...statsData, distribution: emotionData.distribution })
       setReadiness(readinessData)
+      setModelStatus(modelData)
       // Pick a peaceful/neutral track for the loading screen
       const peaceful = emotionData.distribution?.find(e => e.emotion_label === 'peaceful')
       if (peaceful) {
@@ -1207,6 +1272,33 @@ export default function Dashboard() {
     }, 8000)
     return () => clearInterval(interval)
   }, [readiness?.state])
+
+  async function handleReclassify() {
+    const tok = token()
+    if (!tok) return
+    const hdrs = { Authorization: `Bearer ${tok}` }
+    try {
+      const res = await fetch(`${API}/tracks/reclassify`, { method: 'POST', headers: hdrs })
+      if (!res.ok) throw new Error('Reclassification failed')
+      const data = await res.json()
+      setReclassifyMsg(`${data.updated} tracks reclassified with ML model`)
+      setTimeout(() => setReclassifyMsg(null), 5000)
+      // Refresh stats + emotions + readiness + model status
+      Promise.all([
+        fetch(`${API}/tracks/stats`, { headers: hdrs }).then(r => r.json()),
+        fetch(`${API}/tracks/emotions`, { headers: hdrs }).then(r => r.json()),
+        fetch(`${API}/tracks/readiness`, { headers: hdrs }).then(r => r.json()),
+        fetch(`${API}/tracks/model-status`, { headers: hdrs }).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]).then(([s, e, r, m]) => {
+        setStats({ ...s, distribution: e.distribution })
+        setReadiness(r)
+        setModelStatus(m)
+      }).catch(() => {})
+    } catch {
+      setError('Reclassification failed — is the model trained?')
+      setTimeout(() => setError(null), 4000)
+    }
+  }
 
   async function handleGenerateArc(text, duration, sourceEmotion, targetEmotion) {
     setMoodText(text)
@@ -1279,7 +1371,7 @@ export default function Dashboard() {
       <style>{dashCss}</style>
       <ConstellationBg />
 
-      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} />}
+      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} modelStatus={modelStatus} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} onReclassify={handleReclassify} />}
       {screen === 'input'    && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} authToken={token()} />}
       {screen === 'loading'  && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
       {screen === 'result'   && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}
@@ -1288,6 +1380,11 @@ export default function Dashboard() {
       {error && (
         <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', padding: '12px 24px', borderRadius: '100px', fontSize: '14px', zIndex: 100 }}>
           {error}
+        </div>
+      )}
+      {reclassifyMsg && (
+        <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#34d399', padding: '12px 24px', borderRadius: '100px', fontSize: '14px', zIndex: 100 }}>
+          ✓ {reclassifyMsg}
         </div>
       )}
     </div>
