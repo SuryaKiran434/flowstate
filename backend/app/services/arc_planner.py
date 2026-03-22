@@ -128,11 +128,13 @@ class ArcPlanner:
             JOIN track_features tf ON t.id = tf.track_id
             WHERE ut.user_id = cast(:uid as uuid)
               AND tf.emotion_label IS NOT NULL
+              AND t.name IS NOT NULL
+              AND t.duration_ms > 0
             ORDER BY RANDOM()
         """), {"uid": user_id}).fetchall()
 
         excluded = excluded_spotify_ids or set()
-        return [
+        candidates = [
             TrackCandidate(
                 track_id=str(r.track_id),
                 spotify_id=r.spotify_id,
@@ -149,6 +151,15 @@ class ArcPlanner:
             for r in rows
             if r.emotion_label is not None and r.spotify_id not in excluded
         ]
+
+        # Deduplicate by normalised title — keep highest-confidence version of each song.
+        # Prevents the same song appearing twice when multiple editions share a title.
+        seen_titles: dict[str, TrackCandidate] = {}
+        for t in candidates:
+            key = t.title.lower().strip() if t.title else t.spotify_id
+            if key not in seen_titles or t.emotion_confidence > seen_titles[key].emotion_confidence:
+                seen_titles[key] = t
+        return list(seen_titles.values())
 
     def plan_from_db(
         self,
@@ -344,7 +355,8 @@ class ArcPlanner:
         directions = self._compute_energy_directions(arc_path)
 
         segments   = []
-        used_ids:  set[str] = set()
+        used_ids:  set[str] = set()  # track_id UUIDs
+        used_spotify_ids: set[str] = set()  # spotify_ids — second dedup layer
         flat_tracks: list[TrackCandidate] = []
 
         for i, (emotion, n_tracks, direction) in enumerate(
@@ -357,8 +369,11 @@ class ArcPlanner:
                 energy_direction=direction,
                 used_track_ids=used_ids,
             )
+            # Filter any that share a spotify_id already used (cross-segment safety net)
+            selected = [t for t in selected if t.spotify_id not in used_spotify_ids]
             for t in selected:
                 used_ids.add(t.track_id)
+                used_spotify_ids.add(t.spotify_id)
 
             segments.append({
                 "emotion":          emotion,
