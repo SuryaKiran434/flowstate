@@ -3,6 +3,25 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import SpotifyPlayer from '../components/SpotifyPlayer'
 import ArcVisualizer from '../components/ArcVisualizer'
 
+// ── Error boundary — shows crash details instead of blank page ────────────────
+class ArcErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null } }
+  static getDerivedStateFromError(error) { return { error } }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 40, color: '#f87171', fontFamily: 'monospace', fontSize: 13, background: '#0a0010', minHeight: '100vh' }}>
+          <div style={{ color: '#f87171', fontWeight: 700, fontSize: 16, marginBottom: 16 }}>Arc render error</div>
+          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#fca5a5' }}>{this.state.error.message}</pre>
+          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#94a3b8', fontSize: 11, marginTop: 12 }}>{this.state.error.stack}</pre>
+          <button onClick={() => { this.setState({ error: null }); this.props.onReset?.() }} style={{ marginTop: 24, padding: '8px 20px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>Back to input</button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
 // ── Emotion color map ─────────────────────────────────────────────────────────
@@ -716,7 +735,7 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
     setReplanning(true)
 
     // Remaining duration: sum of tracks from currentPosition onward (in minutes)
-    const remainingMs = arc.tracks
+    const remainingMs = (arc.tracks || [])
       .slice(currentPosition)
       .reduce((sum, t) => sum + (t.duration_ms || 0), 0)
     const remainingMins = Math.max(5, Math.round(remainingMs / 60000))
@@ -762,12 +781,12 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
     }
   }, [postTrackEvent, handleReplan])
 
-  const totalMin = Math.round(arc.total_duration_ms / 60000)
+  const totalMin = Math.round((arc.total_duration_ms || 0) / 60000)
 
   // Build a map from (segmentIndex, trackIndex) → flat arc.tracks index
   // so clicking a segment track can address the global flat list
-  const segTrackOffset = arc.segments.reduce((acc, seg, si) => {
-    acc[si] = si === 0 ? 0 : acc[si - 1] + arc.segments[si - 1].track_count
+  const segTrackOffset = (arc.segments || []).reduce((acc, seg, si) => {
+    acc[si] = si === 0 ? 0 : acc[si - 1] + (arc.segments[si - 1]?.track_count || 0)
     return acc
   }, {})
 
@@ -831,7 +850,7 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
     setAdjusting(true)
 
     const position = playingIndex ?? 0
-    const remainingMs = arc.tracks.slice(position).reduce((s, t) => s + (t.duration_ms || 0), 0)
+    const remainingMs = (arc.tracks || []).slice(position).reduce((s, t) => s + (t.duration_ms || 0), 0)
     const remainingMins = Math.max(5, Math.round(remainingMs / 60000))
 
     try {
@@ -896,7 +915,7 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
           <div>
             <div style={s.arcInterpret}>{arc.mood_interpretation}</div>
             <div style={s.arcMeta}>
-              {arc.total_tracks} tracks · {totalMin} min · {arc.arc_path.length} emotional stages
+              {arc.total_tracks} tracks · {totalMin} min · {(arc.arc_path || []).length} emotional stages
               {arc.personalised && (
                 <span style={{
                   marginLeft: 10,
@@ -970,7 +989,7 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
 
         {/* Path visualization */}
         <div style={s.pathWrap}>
-          {arc.arc_path.map((emotion, i) => (
+          {(arc.arc_path || []).map((emotion, i) => (
             <React.Fragment key={emotion}>
               <div style={s.pathNode}>
                 <div style={{ ...s.pathBubble, background: EMOTION_COLORS[emotion] + '22', border: `1.5px solid ${EMOTION_COLORS[emotion]}`, boxShadow: `0 0 20px ${EMOTION_COLORS[emotion]}33` }}>
@@ -1002,7 +1021,7 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
 
         {/* Segments */}
         <div style={s.segmentsWrap}>
-          {arc.segments.map((seg, si) => (
+          {(arc.segments || []).map((seg, si) => (
             <div key={seg.emotion} style={s.segment}>
               <div style={s.segHeader} onClick={() => setExpanded(expanded === si ? null : si)}>
                 <div style={s.segLeft}>
@@ -1039,11 +1058,11 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
                         className={`track-row${isPlaying ? ' playing-track-row' : ''}`}
                         onClick={() => spotifyToken && handleTrackClick(si, ti)}
                       >
-                        <div style={{ ...s.trackNum, color: isPlaying ? EMOTION_COLORS[track.emotion_label] : undefined }}>
+                        <div style={{ ...s.trackNum, color: isPlaying ? EMOTION_COLORS[track.emotion_label] : s.trackNum.color }}>
                           {isPlaying ? '▶' : ti + 1}
                         </div>
                         <div style={s.trackInfo}>
-                          <div style={{ ...s.trackTitle, color: isPlaying ? '#e2e8f0' : undefined }}>{track.title}</div>
+                          <div style={{ ...s.trackTitle, color: isPlaying ? EMOTION_COLORS[track.emotion_label] : s.trackTitle.color }}>{track.title}</div>
                           <div style={s.trackArtist}>{track.artist}</div>
                         </div>
                         <div style={s.trackMeta}>
@@ -1169,7 +1188,7 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
       {spotifyToken && (
         <SpotifyPlayer
           ref={playerRef}
-          tracks={arc.tracks}
+          tracks={arc.tracks || []}
           spotifyToken={spotifyToken}
           onTrackChange={handleTrackChange}
           onQuickSkip={handleQuickSkip}
@@ -1833,6 +1852,10 @@ export default function Dashboard() {
         throw new Error(err.detail?.message || 'Arc generation failed')
       }
       const data = await res.json()
+      // 202 is res.ok but means library_not_ready — FastAPI wraps it in detail
+      if (data.detail?.error) {
+        throw new Error(data.detail?.message || data.detail?.error || 'Arc generation failed')
+      }
       setArc(data)
       setScreen('result')
 
@@ -1885,7 +1908,11 @@ export default function Dashboard() {
       {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} modelStatus={modelStatus} insights={insights} langStats={langStats} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} onCollab={() => setScreen('collab')} onReclassify={handleReclassify} />}
       {screen === 'input'    && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} authToken={token()} />}
       {screen === 'loading'  && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
-      {screen === 'result'   && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}
+      {screen === 'result'   && arc && (
+        <ArcErrorBoundary onReset={() => { setArc(null); setSessionId(null); setScreen('input') }}>
+          <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />
+        </ArcErrorBoundary>
+      )}
       {screen === 'discover' && <DiscoverScreen authToken={token()} onBack={() => setScreen('landing')} onRemix={(arc) => { setArc(arc); setScreen('result') }} />}
       {screen === 'collab'   && <CollabScreen authToken={token()} onBack={() => setScreen('landing')} onArcReady={(arc) => { setArc(arc); setScreen('result') }} />}
 
@@ -2032,8 +2059,8 @@ const s = {
   trackRow: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 20px', borderRadius: '0', cursor: 'default' },
   trackNum: { fontSize: '12px', color: 'rgba(255,255,255,0.2)', width: '20px', textAlign: 'right', flexShrink: 0 },
   trackInfo: { flex: 1, minWidth: 0 },
-  trackTitle: { fontSize: '14px', color: 'rgba(255,255,255,0.85)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  trackArtist: { fontSize: '12px', color: 'rgba(255,255,255,0.35)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  trackTitle: { fontSize: '14px', color: '#ffffff', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  trackArtist: { fontSize: '12px', color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   trackMeta: { display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 },
   energyBar: { width: '52px', height: '3px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' },
   energyFill: { height: '100%', borderRadius: '2px', transition: 'width 0.3s ease' },

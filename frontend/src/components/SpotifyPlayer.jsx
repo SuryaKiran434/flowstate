@@ -192,7 +192,14 @@ const SpotifyPlayer = forwardRef(function SpotifyPlayer(
   useImperativeHandle(ref, () => ({ playFromIndex, currentIndex }), [playFromIndex, currentIndex])
 
   // ── Control helpers ─────────────────────────────────────────────────────────
-  const togglePlay = () => playerRef.current?.togglePlay()
+  const togglePlay = () => {
+    // If nothing has been queued yet (position=0, paused), start from currentIndex
+    if (isPaused && position === 0 && duration === 0) {
+      playFromIndex(currentIndex)
+    } else {
+      playerRef.current?.togglePlay()
+    }
+  }
   const previous   = () => playerRef.current?.previousTrack()
   const next       = () => playerRef.current?.nextTrack()
   const seek       = (e) => {
