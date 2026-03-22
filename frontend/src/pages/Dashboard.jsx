@@ -224,7 +224,7 @@ function InsightsPanel({ insights }) {
 }
 
 // ── Screen 1: Landing ─────────────────────────────────────────────────────────
-function LandingScreen({ user, stats, readiness, modelStatus, insights, onStart, onDiscover, onReclassify }) {
+function LandingScreen({ user, stats, readiness, modelStatus, insights, onStart, onDiscover, onCollab, onReclassify }) {
   const [reclassifying, setReclassifying] = useState(false)
   async function _reclassify() {
     setReclassifying(true)
@@ -278,6 +278,20 @@ function LandingScreen({ user, stats, readiness, modelStatus, insights, onStart,
             >
               Discover arcs
               <span style={s.arrow}>✦</span>
+            </button>
+            <button
+              onClick={onCollab}
+              className="start-btn"
+              style={{
+                ...s.startBtn,
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                color: 'rgba(255,255,255,0.7)',
+                boxShadow: 'none',
+              }}
+            >
+              Collaborate
+              <span style={s.arrow}>⊕</span>
             </button>
           </div>
         </div>
@@ -1296,6 +1310,303 @@ function DiscoverScreen({ onBack, authToken, onRemix }) {
   )
 }
 
+// ── Screen 6: Collaborative Arc Session ──────────────────────────────────────
+function CollabScreen({ onBack, authToken, onArcReady }) {
+  const EMOTIONS = Object.keys(EMOTION_COLORS)
+  const [mode, setMode]           = useState('create') // 'create' | 'join'
+  const [targetEmotion, setTarget] = useState('peaceful')
+  const [duration, setDuration]   = useState(30)
+  const [sourceEmotion, setSource] = useState('tense')
+  const [inviteCode, setInviteCode] = useState('')
+  const [joinCode, setJoinCode]   = useState('')
+  const [session, setSession]     = useState(null) // session data after create/join
+  const [error, setError]         = useState(null)
+  const [generating, setGenerating] = useState(false)
+  const [joinMsg, setJoinMsg]     = useState(null)
+  const pollRef                   = useRef(null)
+
+  const hdrs = { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' }
+
+  // Poll session state while waiting as host
+  useEffect(() => {
+    if (!inviteCode || !authToken) return
+    pollRef.current = setInterval(async () => {
+      try {
+        const r = await fetch(`${API}/collab/sessions/${inviteCode}`, { headers: hdrs })
+        if (r.ok) setSession(await r.json())
+      } catch {}
+    }, 4000)
+    return () => clearInterval(pollRef.current)
+  }, [inviteCode])
+
+  async function handleCreate() {
+    setError(null)
+    try {
+      const r = await fetch(`${API}/collab/sessions`, {
+        method: 'POST', headers: hdrs,
+        body: JSON.stringify({ target_emotion: targetEmotion, duration_minutes: duration }),
+      })
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed') }
+      const data = await r.json()
+      setInviteCode(data.invite_code)
+      // Also join with host's own source emotion
+      await fetch(`${API}/collab/sessions/${data.invite_code}/join`, {
+        method: 'POST', headers: hdrs,
+        body: JSON.stringify({ source_emotion: sourceEmotion }),
+      })
+      const s2 = await fetch(`${API}/collab/sessions/${data.invite_code}`, { headers: hdrs })
+      setSession(await s2.json())
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  async function handleJoin() {
+    setError(null)
+    if (!joinCode.trim()) return
+    try {
+      const r = await fetch(`${API}/collab/sessions/${joinCode.trim().toUpperCase()}/join`, {
+        method: 'POST', headers: hdrs,
+        body: JSON.stringify({ source_emotion: sourceEmotion }),
+      })
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Not found') }
+      const s = await fetch(`${API}/collab/sessions/${joinCode.trim().toUpperCase()}`, { headers: hdrs })
+      setSession(await s.json())
+      setInviteCode(joinCode.trim().toUpperCase())
+      setJoinMsg(`Joined! You're contributing "${sourceEmotion}" to the group arc.`)
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  async function handleGenerateArc() {
+    setGenerating(true)
+    setError(null)
+    try {
+      const r = await fetch(`${API}/collab/sessions/${inviteCode}/arc`, {
+        method: 'POST', headers: hdrs,
+      })
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Generation failed') }
+      const arc = await r.json()
+      clearInterval(pollRef.current)
+      onArcReady(arc)
+    } catch (e) {
+      setError(e.message)
+      setGenerating(false)
+    }
+  }
+
+  const cardStyle = { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: '20px 24px', marginBottom: 16 }
+
+  return (
+    <div style={s.screen}>
+      <div style={{ width: '100%', maxWidth: 560, position: 'relative', zIndex: 1 }}>
+        <button onClick={onBack} style={s.backBtn}>← back</button>
+
+        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 700, color: '#fff', marginBottom: 6, letterSpacing: '-0.5px' }}>
+          Collaborative Arc
+        </div>
+        <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.4)', marginBottom: 28, fontWeight: 300 }}>
+          Everyone brings their emotion. One arc moves you all.
+        </p>
+
+        {/* Mode tabs */}
+        {!inviteCode && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+            {['create', 'join'].map(m => (
+              <button key={m} onClick={() => setMode(m)} style={{
+                flex: 1,
+                background: mode === m ? 'rgba(139,92,246,0.18)' : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${mode === m ? 'rgba(139,92,246,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                color: mode === m ? '#c4b5fd' : 'rgba(255,255,255,0.4)',
+                borderRadius: 10, padding: '9px 0', fontSize: 13, fontWeight: 600,
+                cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+              }}>
+                {m === 'create' ? '⊕ Start a session' : '↗ Join a session'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Create mode */}
+        {!inviteCode && mode === 'create' && (
+          <div>
+            <div style={cardStyle}>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>
+                Where do you want everyone to land?
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+                {EMOTIONS.map(e => (
+                  <button key={e} onClick={() => setTarget(e)} style={{
+                    background: targetEmotion === e ? EMOTION_COLORS[e] + '30' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${targetEmotion === e ? EMOTION_COLORS[e] + '80' : 'rgba(255,255,255,0.1)'}`,
+                    color: targetEmotion === e ? EMOTION_COLORS[e] : 'rgba(255,255,255,0.5)',
+                    borderRadius: 100, padding: '5px 14px', fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    {EMOTION_EMOJI[e]} {e}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 14 }}>
+                Your current state
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+                {EMOTIONS.map(e => (
+                  <button key={e} onClick={() => setSource(e)} style={{
+                    background: sourceEmotion === e ? EMOTION_COLORS[e] + '30' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${sourceEmotion === e ? EMOTION_COLORS[e] + '80' : 'rgba(255,255,255,0.1)'}`,
+                    color: sourceEmotion === e ? EMOTION_COLORS[e] : 'rgba(255,255,255,0.5)',
+                    borderRadius: 100, padding: '5px 14px', fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    {EMOTION_EMOJI[e]} {e}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginBottom: 4 }}>
+                <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>Duration: <b style={{ color: '#fff' }}>{duration} min</b></span>
+                <input type="range" min={10} max={90} step={5} value={duration} onChange={e => setDuration(+e.target.value)}
+                  className="mood-slider" style={{ display: 'block', width: '100%', marginTop: 8 }} />
+              </div>
+            </div>
+            <button onClick={handleCreate} className="start-btn" style={{ ...s.startBtn, width: '100%', justifyContent: 'center' }}>
+              Create session →
+            </button>
+          </div>
+        )}
+
+        {/* Join mode */}
+        {!inviteCode && mode === 'join' && (
+          <div>
+            <div style={cardStyle}>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>
+                Session invite code
+              </div>
+              <input
+                value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())}
+                placeholder="e.g. AZ3K7Q"
+                maxLength={8}
+                style={{
+                  width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 10, padding: '12px 16px', color: '#fff', fontSize: 18,
+                  fontWeight: 700, letterSpacing: '0.15em', fontFamily: "'Syne', sans-serif",
+                  outline: 'none', marginBottom: 16,
+                }}
+              />
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>
+                Your current state
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {EMOTIONS.map(e => (
+                  <button key={e} onClick={() => setSource(e)} style={{
+                    background: sourceEmotion === e ? EMOTION_COLORS[e] + '30' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${sourceEmotion === e ? EMOTION_COLORS[e] + '80' : 'rgba(255,255,255,0.1)'}`,
+                    color: sourceEmotion === e ? EMOTION_COLORS[e] : 'rgba(255,255,255,0.5)',
+                    borderRadius: 100, padding: '5px 14px', fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    {EMOTION_EMOJI[e]} {e}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button onClick={handleJoin} disabled={!joinCode.trim()} className="start-btn"
+              style={{ ...s.startBtn, width: '100%', justifyContent: 'center', opacity: joinCode.trim() ? 1 : 0.4 }}>
+              Join session →
+            </button>
+            {joinMsg && (
+              <div style={{ marginTop: 14, fontSize: 13, color: '#34d399', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 10, padding: '10px 16px' }}>
+                ✓ {joinMsg}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Session lobby — shown after create or join */}
+        {inviteCode && session && (
+          <div>
+            <div style={{ ...cardStyle, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+                    Invite code
+                  </div>
+                  <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, color: '#c4b5fd', letterSpacing: '0.15em' }}>
+                    {inviteCode}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+                    Destination
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: EMOTION_COLORS[session.target_emotion] || '#a78bfa' }}>
+                    {EMOTION_EMOJI[session.target_emotion]} {session.target_emotion}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>
+                {session.participant_count} participant{session.participant_count !== 1 ? 's' : ''} in the session
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {session.participants?.map((p, i) => (
+                  <div key={p.user_id || i} style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    background: EMOTION_COLORS[p.source_emotion] + '18',
+                    border: `1px solid ${EMOTION_COLORS[p.source_emotion] + '50'}`,
+                    borderRadius: 100, padding: '5px 14px', fontSize: 12,
+                  }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: EMOTION_COLORS[p.source_emotion] || '#a78bfa', display: 'inline-block', flexShrink: 0 }} />
+                    <span style={{ color: EMOTION_COLORS[p.source_emotion] || '#a78bfa', fontWeight: 600 }}>
+                      {EMOTION_EMOJI[p.source_emotion]} {p.source_emotion}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {session.aggregated_source && (
+                <div style={{ marginTop: 14, fontSize: 12, color: 'rgba(255,255,255,0.5)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
+                  Group centroid: <span style={{ color: EMOTION_COLORS[session.aggregated_source] || '#a78bfa', fontWeight: 600 }}>
+                    {EMOTION_EMOJI[session.aggregated_source]} {session.aggregated_source}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Generate button — only for host (session.host_user_id isn't exposed here, show for everyone but API will guard) */}
+            {mode === 'create' && (
+              <button
+                onClick={handleGenerateArc}
+                disabled={generating || session.participant_count < 1}
+                className="start-btn"
+                style={{
+                  ...s.startBtn, width: '100%', justifyContent: 'center',
+                  opacity: generating ? 0.6 : 1,
+                  background: generating ? 'rgba(139,92,246,0.3)' : undefined,
+                }}
+              >
+                {generating ? 'Generating group arc…' : `Generate arc for ${session.participant_count} participant${session.participant_count !== 1 ? 's' : ''} →`}
+              </button>
+            )}
+            {mode === 'join' && (
+              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', textAlign: 'center', padding: '16px 0' }}>
+                Waiting for the host to generate the arc…
+              </div>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <div style={{ marginTop: 12, fontSize: 13, color: '#fca5a5', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 16px' }}>
+            {error}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getTimeOfDay() {
   const h = new Date().getHours()
@@ -1309,7 +1620,7 @@ export default function Dashboard() {
   const [user, setUser]               = useState(null)
   const [stats, setStats]             = useState(null)
   const [readiness, setReadiness]     = useState(null)
-  const [screen, setScreen]           = useState('landing') // landing | input | loading | result | discover
+  const [screen, setScreen]           = useState('landing') // landing | input | loading | result | discover | collab
   const [arc, setArc]                 = useState(null)
   const [sessionId, setSessionId]     = useState(null)
   const [moodText, setMoodText]       = useState('')
@@ -1493,11 +1804,12 @@ export default function Dashboard() {
       <style>{dashCss}</style>
       <ConstellationBg />
 
-      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} modelStatus={modelStatus} insights={insights} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} onReclassify={handleReclassify} />}
+      {screen === 'landing'  && <LandingScreen user={user} stats={stats} readiness={readiness} modelStatus={modelStatus} insights={insights} onStart={() => setScreen('input')} onDiscover={() => setScreen('discover')} onCollab={() => setScreen('collab')} onReclassify={handleReclassify} />}
       {screen === 'input'    && <MoodInputScreen onSubmit={handleGenerateArc} onBack={() => setScreen('landing')} authToken={token()} />}
       {screen === 'loading'  && <LoadingScreen moodText={moodText} waitTrack={waitTrack} />}
       {screen === 'result'   && arc && <ArcResultScreen arc={arc} spotifyToken={spotifyToken} sessionId={sessionId} authToken={token()} onReset={() => { setArc(null); setSessionId(null); setScreen('input') }} />}
       {screen === 'discover' && <DiscoverScreen authToken={token()} onBack={() => setScreen('landing')} onRemix={(arc) => { setArc(arc); setScreen('result') }} />}
+      {screen === 'collab'   && <CollabScreen authToken={token()} onBack={() => setScreen('landing')} onArcReady={(arc) => { setArc(arc); setScreen('result') }} />}
 
       {error && (
         <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', padding: '12px 24px', borderRadius: '100px', fontSize: '14px', zIndex: 100 }}>
