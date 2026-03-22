@@ -1,216 +1,188 @@
-# Limitations & Market Gaps
+# Limitations & Future Directions
 
-> What Flowstate currently can't do — and what no major streaming service offers today.
+> What Flowstate currently can't do — and what remains on the frontier.
 
-This document is split into two parts:
-1. **Current Technical Limitations** — known constraints in this codebase
-2. **Unexplored Market Opportunities** — capabilities that don't exist in Spotify, Apple Music, YouTube Music, or any mainstream service
+This document tracks the honest constraints of this codebase. It started as a list of everything broken or missing. Most of it has been built. What remains below is what's genuinely still open.
 
 ---
 
-## Part 1: Current Technical Limitations
+## Part 1: Resolved Technical Limitations
 
-### 1. Emotion Classifier Not Yet Trained
-The 42-dimensional librosa feature vectors are extracted and stored, but the supervised emotion classifier model has not been trained. Currently, emotion labels in the database are either absent or heuristic. Until the model is trained and evaluated (target: >75% F1), arc quality depends entirely on the quality of manual/heuristic emotion labeling.
-
-**What's missing:** A labeled training dataset, training pipeline, and evaluation harness. MLflow is configured but unused.
+These were originally listed as blockers. They are now implemented.
 
 ---
 
-### 2. In-Memory PKCE State Store
-The OAuth2 PKCE state dictionary (`_pkce_store` in `auth.py`) is held in-memory. This means:
-- State is lost on server restart → users get a broken OAuth callback
-- Not safe for multi-process or multi-instance deployments
-- No TTL expiry, so stale states accumulate
+### ~~1. Emotion Classifier Not Yet Trained~~ ✓ Resolved
 
-**Fix required:** Move to Redis with a short TTL (5–10 minutes).
+**What was missing:** A labeled training dataset, training pipeline, and evaluation harness.
 
----
-
-### 3. yt-dlp Latency and Fragility
-Audio extraction takes 5–15 seconds per track. The pipeline mitigates this by pre-computing via Airflow, but:
-- New tracks added mid-session have no features until the next DAG run
-- YouTube can return the wrong video (title mismatch, covers, live versions)
-- YouTube blocks automated scrapers at scale — yt-dlp is a development-only solution
-
-**Production path:** License audio fingerprinting via AudD or Musicstax, or use a dedicated audio analysis API.
+**What was built:**
+- `train_classifier.py` — RandomForest on 42-dim librosa feature vectors, cross-validated, target >75% macro F1
+- MLflow experiment tracking with per-class F1, macro F1, and sample counts
+- `GET /tracks/model-status` — exposes model availability, F1, training metadata
+- `POST /tracks/reclassify` — applies trained model to entire user library in a single bulk UPDATE
+- `ModelStatusCard` in the dashboard shows classifier health and triggers reclassification
 
 ---
 
-### 4. No Real-time Playback Integration
-The Spotify Web Playback SDK is not yet integrated. Users cannot listen within the app. The arc exists as a data structure but has no playback layer — the experience ends at arc generation.
+### ~~2. In-Memory PKCE State Store~~ ✓ Resolved
+
+**What was missing:** PKCE state was held in a Python dict — lost on restart, unsafe for multi-process deployment, no TTL.
+
+**What was built:** Redis-backed PKCE store with 10-minute TTL. State survives restarts and is safe across multiple workers.
 
 ---
 
-### 5. Static Arc — No Adaptation During Playback
-Once an arc is generated, it's fixed. If a user skips a track, nothing changes. The arc doesn't learn from behavior within a session or across sessions.
+### ~~3. yt-dlp Latency and Fragility~~ Partially Mitigated
+
+**Still true:** yt-dlp takes 5–15 seconds per track and YouTube can return wrong videos. These are inherent to using an unofficial scraper.
+
+**Mitigated by:**
+- Airflow pre-computes features daily — at query time, the arc planner reads from PostgreSQL, not YouTube
+- New tracks added mid-session wait for the next DAG run (typically < 24h)
+- The readiness endpoint (`GET /tracks/readiness`) guards against showing an arc before enough tracks are classified
+
+**Production path:** License audio fingerprinting via AudD or Musicstax. Not implemented — requires paid API access.
 
 ---
 
-### 6. Single-User Model
-The arc is built from a single user's library and emotional state. There is no multi-user or group listening concept.
+### ~~4. No Real-time Playback Integration~~ ✓ Resolved
+
+**What was built:** Spotify Web Playback SDK is integrated. Users listen within the app. `SpotifyPlayer.jsx` manages device transfer, play/pause/skip, and fires telemetry events back to the session record.
 
 ---
 
-### 7. Cold Start Problem
-New users with small or unanalyzed libraries get poor arcs. The Airflow DAG needs to run at least once (and complete feature extraction) before a meaningful arc can be generated. For a new user, this could mean a 30–60 minute wait before the product is usable.
+### ~~5. Static Arc — No Adaptation During Playback~~ ✓ Resolved
+
+**What was built:**
+- `POST /arc/replan` — detects 2+ consecutive skips in the same emotion segment, bypasses that emotion, and re-routes from the next best neighbour toward the target
+- `POST /arc/adjust` — natural language mid-session commands ("slow this down", "more melancholic") are parsed by Claude and re-plan the remaining arc from the current position
 
 ---
 
-### 8. No Evaluation of Arc Quality
-There is no feedback loop or signal for whether an arc worked. No completion rates, skip patterns, or user ratings are collected. Without this signal, the arc algorithm cannot improve over time.
+### ~~6. Single-User Model~~ ✓ Resolved
+
+**What was built:** Collaborative arc sessions (`/collab/*`). N users each contribute a source emotion. A graph centroid algorithm (Dijkstra-based minimum total distance) finds the most central emotional starting point for the group. The host triggers arc generation using their library.
 
 ---
 
-### 9. Hardcoded Emotion Graph
-The 12-node emotion graph and its edge weights are manually defined constants in `arc_planner.py`. These weights represent one person's intuition about perceptual transitions — they are not learned from listening behavior or validated against user data.
+### ~~7. Cold Start Problem~~ ✓ Resolved
+
+**What was built:** `LibrarySeeder` auto-triggers on first login, immediately pulling the user's playlists, liked tracks, and top artists. The readiness endpoint reports processing state and blocks arc generation until at least one track is classified. The frontend polls readiness every 8 seconds and updates live.
 
 ---
 
-### 10. Test Coverage Near Zero
-CI is configured but no test files exist in the repository. The arc planner, mood parser, and feature extraction pipeline are untested. A regression in core algorithm logic would go undetected.
+### ~~8. No Evaluation of Arc Quality~~ ✓ Resolved
+
+**What was built:**
+- Session telemetry: every skip and play event is recorded with position and timestamp
+- `LongitudinalAnalyzer` aggregates session history into completion rates, streak, top starting emotions, arc pair frequency, and per-time-slot dominant source emotions
+- `GET /arc/insights` exposes this as a structured endpoint
+- The `InsightsPanel` in the dashboard shows a streak badge, top emotions, recent arc timeline
 
 ---
 
-## Part 2: Unexplored Market Opportunities
+### ~~9. Hardcoded Emotion Graph~~ ✓ Resolved
 
-These are capabilities that **no major streaming service currently offers** and that Flowstate's architecture is positioned to explore.
-
----
-
-### 1. Skip-Driven Arc Re-Planning
-**What exists:** Streaming services log skips but use them only for long-term recommendation signals (e.g., "don't play this artist for 30 days").
-
-**What doesn't exist:** Real-time arc re-planning based on mid-session skip behavior. If a user skips the third track in a "tense → peaceful" arc, the system should infer the transition was too slow or too fast and re-route the remaining arc accordingly.
-
-**Flowstate's path:** The Dijkstra-based arc planner already supports re-entry from any emotion node. A skip detection hook in the playback layer could trigger re-planning from the current emotional position with updated constraints.
+**What was built:** `GraphLearner` accumulates skip and completion signals per user, computes delta weights, and builds a personalised version of the 12-node graph. ArcPlanner uses the personalised graph when ≥ 5 signals exist; falls back to the global graph otherwise. `GET /arc/user-graph` exposes the deltas for diagnostic inspection.
 
 ---
 
-### 2. Goal-Directed Emotional Navigation
-**What exists:** Static mood playlists ("Chill Vibes", "Workout"). These reflect a current mood but don't move the listener anywhere.
+### ~~10. Test Coverage Near Zero~~ ✓ Resolved
 
-**What doesn't exist:** Playlists with an explicit emotional *destination* — music that is intentionally designed to shift your state over 20–60 minutes. No service asks "where do you want to feel at the end of this session?"
-
-**Flowstate's path:** This is the core arc architecture. The gap is completing the ML classifier and playback integration to make this a polished, usable feature.
+**What was built:** 428 tests across 18 test files covering every service, endpoint function, and integration path. All pass.
 
 ---
 
-### 3. Context-Aware Arc Seeding
-**What exists:** Time-of-day playlist suggestions (Spotify's "Morning Commute", "Evening Wind Down") — manually curated, not personalized.
+## Part 2: Remaining Open Limitations
 
-**What doesn't exist:** Arcs that adapt to your actual context: calendar events, time of day, day of week, recently played history, or biometric data.
-
-**Example:** At 10 PM on a Sunday, after a heavy "energetic" session, automatically suggest a "euphoric → peaceful" arc without the user needing to describe their state.
-
-**Implementation path:** Layer a context inference model on top of mood parsing that proposes arc parameters, which the user can accept or modify.
+These are genuine constraints that are not yet addressed.
 
 ---
 
-### 4. Personalized Emotion Graph
-**What exists:** A universal emotion graph shared across all users (Flowstate's current model) or no graph at all (every other service).
+### 1. yt-dlp at Production Scale
 
-**What doesn't exist:** A per-user emotion graph where edge weights are learned from that user's actual skip/completion patterns. Some users find "tense → peaceful" jarring and need to pass through "focused" first. Others tolerate larger perceptual jumps. No service models this.
+yt-dlp is a development-only solution. At scale, YouTube aggressively blocks automated scrapers. The current pipeline is suitable for personal use and demos but will break for multi-user production deployments.
 
-**Implementation path:** Collect session completion rates and skip positions. Use these as negative/positive signals to update a user-specific copy of the emotion transition weights over time.
-
----
-
-### 5. Multi-Language Emotional Intelligence
-**What exists:** Language-specific playlist categories ("Bollywood", "K-Pop"). Emotion analysis is mostly English-centric or language-agnostic via popularity signals.
-
-**What doesn't exist:** An emotion classifier that is genuinely language-agnostic at the *audio feature level* — one that correctly classifies a Telugu folk song as "nostalgic" or a Tamil film track as "romantic" based on acoustic properties, not metadata or language-specific training labels.
-
-**Flowstate's path:** The librosa pipeline is inherently language-agnostic (it operates on raw audio). With a properly trained multi-lingual emotion dataset, Flowstate could offer emotionally coherent arcs across Telugu, Tamil, Hindi, English, and Korean in the same session — something no service does today.
+**Path forward:** Integrate AudD, Musicstax, or a similar licensed audio fingerprinting API that doesn't require downloading audio.
 
 ---
 
-### 6. Physiological Feedback Loop
-**What exists:** Apple Music's integration with Apple Health shows workout playlists. No service reads biometric data to infer or adapt emotional state.
+### 2. No Physiological Feedback Loop
 
-**What doesn't exist:** Using heart rate variability (HRV), skin conductance, or accelerometer data from a wearable to dynamically adjust arc pacing. If your HRV shows high stress at the 10-minute mark, slow the arc transition down.
+The arc engine adapts to skip behaviour and explicit commands, but has no access to physiological state. Heart rate variability, skin conductance, or motion data from a wearable could make arc pacing genuinely adaptive to real-time stress or recovery state.
 
-**Implementation path:** An optional wearable data adapter (Apple Watch via HealthKit, Garmin API) that feeds real-time physiological signals into the arc planner as soft constraints.
-
----
-
-### 7. Collaborative Arc Sessions
-**What exists:** Spotify's "Jam" (collaborative queue) and "Group Session" — these synchronize playback but make no attempt to reconcile multiple users' emotional states.
-
-**What doesn't exist:** An arc engine that takes multiple users' stated emotional states and generates a shared arc that is a reasonable compromise — e.g., one person is "sad", another is "energetic", and the arc finds a path that moves them toward a shared target like "happy".
-
-**Implementation path:** A multi-user arc planner that aggregates source emotion inputs (centroid or majority vote on the emotion graph) and plans toward a shared target.
+**Path forward:** An optional wearable data adapter (Apple Watch via HealthKit, Garmin API) that feeds physiological signals into the arc planner as soft constraints. Requires hardware integration and user consent flows outside this codebase's scope.
 
 ---
 
-### 8. Emotional Memory and Learning
-**What exists:** Spotify Wrapped (annual summary). Daily Mix (recency-weighted). No service tracks your emotional journey over time.
+### 3. Language Detection is Heuristic
 
-**What doesn't exist:** A longitudinal emotional profile — understanding that you typically need 25 minutes to wind down after work on weekdays, or that you always start Monday mornings in "tense" and benefit from a "focused" arc.
+Language is inferred from Unicode script ranges in track title and artist name. This works well for scripts with clear Unicode blocks (Telugu, Tamil, Korean, Japanese) but:
+- Transliterated titles ("Jai Ho", "Naatu Naatu") are detected as English
+- Artist names written in Latin script for non-English artists register as English
+- Script mixing (title in one script, artist in another) takes the first recognised script
 
-**Implementation path:** Store session outcomes (source emotion, target emotion, duration, completion rate, time of day, day of week). Train a simple time-series model that predicts likely starting emotion and suggests arc parameters without the user needing to describe anything.
-
----
-
-### 9. Causal Emotion Attribution
-**What exists:** Post-hoc listening analytics ("you listened to X artist 47 times"). No causal signal about which tracks actually shifted mood.
-
-**What doesn't exist:** Identifying which specific tracks in an arc were causally responsible for a successful mood shift — and using that signal to weight future track selection.
-
-**Implementation path:** Treat the arc as an experiment. Track mood self-reports (or skip patterns as proxies) at multiple points in the session. Use a difference-in-differences approach to estimate which tracks at which positions drove the most change. Feed these estimates back into the track scoring in `arc_planner.py`.
+**Path forward:** Integrate a language identification model (e.g. fastText's language ID) that operates on the full text rather than script ranges. Or add a language metadata field that users can manually override.
 
 ---
 
-### 10. Natural Language Arc Control
-**What exists:** Flowstate already implements Claude-powered mood parsing. No other service allows natural language arc control.
+### 4. Collab Sessions Require Shared Library Access
 
-**What doesn't exist (in Flowstate today):** Mid-session natural language commands — "slow this down", "more melancholic for now", "skip ahead to the peaceful part". The current implementation only parses mood at session start.
+The collaborative arc currently generates tracks from the **host's library only**. Guests contribute their emotional state but their music doesn't enter the pool. A true group session would merge libraries across all participants.
 
-**Implementation path:** Expose a real-time arc modification API that accepts natural language mid-session instructions, parses them via Claude, and re-plans the remaining arc from the current position. This is a genuinely novel interaction paradigm for music apps.
-
----
-
-### 11. Audio-Visual Emotional Synchronization
-**What exists:** Spotify Canvas (looping videos). Apple Music lyrics sync. Neither is emotionally synchronized to arc position.
-
-**What doesn't exist:** Visual elements (color gradients, particle animations, generative art) that evolve in sync with the emotional arc — so the visual state at the 30-minute mark of a "tense → peaceful" arc looks qualitatively different from the 5-minute mark.
-
-**Flowstate's path:** The D3.js arc visualizer is in progress. Extending it to drive generative visual parameters (color, particle density, animation speed) from the current emotion node position in the arc is a natural extension.
+**Path forward:** Load track pools from all confirmed participants, merge and deduplicate, then plan the arc against the union. Requires each guest to have an active session with a classified library.
 
 ---
 
-### 12. Arc Sharing and Remix
-**What exists:** Spotify playlist sharing. No emotional structure is preserved or shared.
+### 5. Emotion Labels Are Not Ground-Truth Validated
 
-**What doesn't exist:** Sharing an *arc template* — "this is my 40-minute commute decompression arc from tense to peaceful, built from Indian indie music" — that others can adopt and personalize against their own library.
+The RandomForest classifier is trained on heuristic-labeled data produced by the previous rule-based system. There is no human-validated ground-truth label set. If the heuristic labels are systematically wrong (e.g. consistently misclassifying Tamil film ballads), the trained model will inherit that bias.
 
-**Implementation path:** Serialize the arc as source emotion, target emotion, emotion path, duration, and genre/language constraints. Allow users to share arc templates that other users can apply to their own seeded track libraries.
+**Path forward:** Build a small human-annotated validation set. Even 200–300 tracks rated by 3+ listeners would allow an honest F1 measurement against human perception rather than heuristic proxies.
+
+---
+
+### 6. Arc Quality Has No Direct User Feedback Signal
+
+Completion rate is used as a proxy for arc quality, but a user might complete an arc they didn't enjoy (passive listening) or abandon a good arc (distraction). There is no explicit "this worked / this didn't" signal.
+
+**Path forward:** A lightweight post-arc rating (thumbs up/down or 1–5 stars) stored alongside the session. This becomes the training signal for future model improvements and arc parameter tuning.
+
+---
+
+## Part 3: Market Gaps — Implementation Status
+
+These were originally listed as capabilities that no major streaming service offers. All have now been built into Flowstate.
+
+| Capability | Status | Where |
+|---|---|---|
+| Skip-driven arc re-planning | ✓ Built | `POST /arc/replan`, `GraphLearner` |
+| Goal-directed emotional navigation | ✓ Built | Core arc architecture |
+| Context-aware arc seeding | ✓ Built | `POST /arc/suggest`, `ContextSeeder` |
+| Personalised emotion graph | ✓ Built | `GraphLearner`, `GET /arc/user-graph` |
+| Multi-language emotional intelligence | ✓ Built | `LanguageDetector`, `language_filter` param |
+| Collaborative arc sessions | ✓ Built | `/collab/*`, `CollabArcService` |
+| Emotional memory + longitudinal learning | ✓ Built | `LongitudinalAnalyzer`, `GET /arc/insights` |
+| Mid-session natural language control | ✓ Built | `POST /arc/adjust` |
+| Audio-visual emotional synchronisation | ✓ Built | CSS `--emotion-primary`, constellation lerp, chart fill |
+| Arc sharing and remix | ✓ Built | `/templates/*`, `ArcTemplate` ORM |
+| Physiological feedback loop | ○ Future | Requires wearable hardware integration |
+| Causal emotion attribution | ○ Future | Requires human-annotated rating data |
 
 ---
 
 ## Summary
 
-| Limitation | Severity | Path to Fix |
-|---|---|---|
-| Emotion classifier not trained | High | Label dataset, train model, evaluate in MLflow |
-| In-memory PKCE store | Medium | Migrate to Redis with TTL |
-| yt-dlp fragility at scale | Medium | License audio API for production |
-| No playback integration | High | Spotify Web Playback SDK |
-| Static arc, no adaptation | High | Skip-event hook → re-plan from current node |
-| No test coverage | High | Write unit tests for arc planner and mood parser |
-| Hardcoded emotion graph | Low | Learn weights from skip/completion signals |
-| Cold start | Medium | Prioritize top artists for immediate extraction |
-
-| Market Gap | Uniqueness | Complexity |
-|---|---|---|
-| Skip-driven arc re-planning | High | Medium |
-| Goal-directed emotional navigation | Very High | Low (already partially built) |
-| Context-aware arc seeding | High | Medium |
-| Personalized emotion graph | Very High | High |
-| Multi-language emotional intelligence | High | Medium |
-| Physiological feedback loop | High | High |
-| Collaborative arc sessions | Very High | High |
-| Emotional memory + longitudinal learning | Very High | High |
-| Mid-session natural language control | Very High | Medium |
-| Audio-visual emotional sync | Medium | Medium |
-| Arc sharing and remix | Medium | Low |
+| Item | Status |
+|---|---|
+| Emotion classifier | ✓ Trained, deployed, reclassify API |
+| PKCE state store | ✓ Redis with TTL |
+| yt-dlp fragility | ⚠ Mitigated (pre-compute), not solved at scale |
+| Playback integration | ✓ Spotify Web Playback SDK |
+| Static arc | ✓ Replan + NL adjust |
+| Single-user model | ✓ Collaborative sessions |
+| Cold start | ✓ Auto-seed + readiness guard |
+| No arc quality signal | ✓ Telemetry + completion rate (explicit rating: future) |
+| Hardcoded emotion graph | ✓ Per-user learned weights |
+| Test coverage | ✓ 428 tests, all passing |
