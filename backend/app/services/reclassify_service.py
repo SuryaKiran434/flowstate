@@ -21,7 +21,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.emotion_classifier import (
-    EMOTIONS,
     EmotionClassifier,
     _DEFAULT_MODEL_PATH,
 )

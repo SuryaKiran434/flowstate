@@ -9,7 +9,6 @@ GET  /api/v1/auth/me                → returns current user profile
 GET  /api/v1/auth/spotify-token     → returns Spotify access token (auto-refreshes)
 """
 
-import os
 import uuid
 from datetime import datetime, timedelta
 

@@ -1,4 +1,3 @@
-import random
 """
 Arc Planning Service — Flowstate
 ---------------------------------
@@ -15,9 +14,9 @@ Author: Surya Kiran Katragadda
 """
 
 import heapq
+import random
 from dataclasses import dataclass, field
 from typing import Optional
-from uuid import UUID
 
 import numpy as np
 

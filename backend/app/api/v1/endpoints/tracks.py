@@ -3,7 +3,6 @@ import os
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from typing import Optional
 
 from app.core.security import get_current_user_id
 from app.db.session import get_db
