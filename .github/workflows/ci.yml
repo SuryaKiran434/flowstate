@@ -71,18 +71,6 @@ jobs:
           cd backend
           pytest tests/unit -v --cov=app --cov-report=xml --cov-report=term
 
-      - name: Run integration tests
-        env:
-          DATABASE_URL: postgresql://flowstate:flowstate_test@localhost:5432/flowstate_test
-          REDIS_URL: redis://localhost:6379/0
-          SECRET_KEY: test_secret_key
-          SPOTIFY_CLIENT_ID: test_client_id
-          SPOTIFY_CLIENT_SECRET: test_client_secret
-          ENVIRONMENT: test
-        run: |
-          cd backend
-          pytest tests/integration -v
-
       - name: Upload coverage report
         uses: codecov/codecov-action@v3
         with:

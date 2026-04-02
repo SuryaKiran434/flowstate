@@ -100,7 +100,7 @@ export default function ArcVisualizer({
       <svg
         width={width}
         height={H}
-        style={{ display: 'block', overflow: 'visible' }}
+        style={{ display: 'block', overflow: 'visible', cursor: onTrackClick ? 'pointer' : 'default' }}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setTooltip(null)}
         onClick={(e) => {
@@ -110,7 +110,6 @@ export default function ArcVisualizer({
           const idx  = Math.round(xScale.invert(mx))
           onTrackClick(Math.max(0, Math.min(n - 1, idx)))
         }}
-        style={{ display: 'block', overflow: 'visible', cursor: onTrackClick ? 'pointer' : 'default' }}
       >
         <defs>
           <filter id="arc-glow" x="-50%" y="-50%" width="200%" height="200%">
