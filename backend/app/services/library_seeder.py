@@ -51,27 +51,33 @@ async def seed_user_library(user_id: str, access_token: str, db) -> int:
         album_obj = track.get("album")
         album = (album_obj.get("name", "") if isinstance(album_obj, dict) else "")[:500]
 
-        db.execute(text("""
+        db.execute(
+            text("""
             INSERT INTO tracks (id, name, artist_names, album_name, duration_ms, preview_url, popularity)
             VALUES (:id, :name, :artists, :album, :duration_ms, :preview_url, :popularity)
             ON CONFLICT (id) DO UPDATE SET
                 popularity  = EXCLUDED.popularity,
                 preview_url = EXCLUDED.preview_url
-        """), {
-            "id":          tid,
-            "name":        str(track.get("name", ""))[:500],
-            "artists":     artists,
-            "album":       album,
-            "duration_ms": track.get("duration_ms"),
-            "preview_url": track.get("preview_url"),
-            "popularity":  track.get("popularity"),
-        })
+        """),
+            {
+                "id": tid,
+                "name": str(track.get("name", ""))[:500],
+                "artists": artists,
+                "album": album,
+                "duration_ms": track.get("duration_ms"),
+                "preview_url": track.get("preview_url"),
+                "popularity": track.get("popularity"),
+            },
+        )
 
-        db.execute(text("""
+        db.execute(
+            text("""
             INSERT INTO user_tracks (id, user_id, track_id)
             VALUES (gen_random_uuid(), cast(:user_id as uuid), :track_id)
             ON CONFLICT (user_id, track_id) DO NOTHING
-        """), {"user_id": user_id, "track_id": tid})
+        """),
+            {"user_id": user_id, "track_id": tid},
+        )
 
         total_saved += 1
         return True

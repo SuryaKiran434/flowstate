@@ -37,20 +37,20 @@ from __future__ import annotations
 
 _SCRIPT_RANGES: list[tuple[int, int, str]] = [
     # South Asian — check most specific first (overlapping Devanagari region)
-    (0x0C00, 0x0C7F, "te"),   # Telugu
-    (0x0B80, 0x0BFF, "ta"),   # Tamil
-    (0x0C80, 0x0CFF, "kn"),   # Kannada
-    (0x0D00, 0x0D7F, "ml"),   # Malayalam
-    (0x0980, 0x09FF, "bn"),   # Bengali
-    (0x0900, 0x097F, "hi"),   # Devanagari (Hindi, Marathi, Sanskrit)
+    (0x0C00, 0x0C7F, "te"),  # Telugu
+    (0x0B80, 0x0BFF, "ta"),  # Tamil
+    (0x0C80, 0x0CFF, "kn"),  # Kannada
+    (0x0D00, 0x0D7F, "ml"),  # Malayalam
+    (0x0980, 0x09FF, "bn"),  # Bengali
+    (0x0900, 0x097F, "hi"),  # Devanagari (Hindi, Marathi, Sanskrit)
     # East Asian
-    (0xAC00, 0xD7AF, "ko"),   # Hangul syllables (Korean)
-    (0x3040, 0x309F, "ja"),   # Hiragana (Japanese)
-    (0x30A0, 0x30FF, "ja"),   # Katakana (Japanese)
-    (0x4E00, 0x9FFF, "zh"),   # CJK Unified Ideographs (Chinese / Japanese Kanji)
+    (0xAC00, 0xD7AF, "ko"),  # Hangul syllables (Korean)
+    (0x3040, 0x309F, "ja"),  # Hiragana (Japanese)
+    (0x30A0, 0x30FF, "ja"),  # Katakana (Japanese)
+    (0x4E00, 0x9FFF, "zh"),  # CJK Unified Ideographs (Chinese / Japanese Kanji)
     # Semitic
-    (0x0600, 0x06FF, "ar"),   # Arabic / Persian / Urdu
-    (0x0590, 0x05FF, "he"),   # Hebrew
+    (0x0600, 0x06FF, "ar"),  # Arabic / Persian / Urdu
+    (0x0590, 0x05FF, "he"),  # Hebrew
 ]
 
 

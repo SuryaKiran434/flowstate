@@ -34,23 +34,23 @@ from app.services.longitudinal_analyzer import LongitudinalAnalyzer
 # ── Time-of-day buckets ───────────────────────────────────────────────────────
 
 _TIME_BUCKETS = [
-    (6,  10, "early morning"),
+    (6, 10, "early morning"),
     (10, 13, "late morning"),
     (13, 17, "afternoon"),
     (17, 20, "early evening"),
     (20, 23, "late evening"),
     (23, 24, "night"),
-    (0,   6, "night"),
+    (0, 6, "night"),
 ]
 
 # (source, target) heuristics keyed by time bucket
 _TIME_HEURISTICS: dict[str, tuple[str, str]] = {
-    "early morning": ("neutral",     "focused"),
-    "late morning":  ("focused",     "energetic"),
-    "afternoon":     ("neutral",     "focused"),
-    "early evening": ("neutral",     "happy"),
-    "late evening":  ("tense",       "peaceful"),
-    "night":         ("melancholic", "peaceful"),
+    "early morning": ("neutral", "focused"),
+    "late morning": ("focused", "energetic"),
+    "afternoon": ("neutral", "focused"),
+    "early evening": ("neutral", "happy"),
+    "late evening": ("tense", "peaceful"),
+    "night": ("melancholic", "peaceful"),
 }
 
 _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -90,7 +90,7 @@ class ContextSeeder:
 
     def __init__(self):
         self.settings = get_settings()
-        self.api_url  = "https://api.anthropic.com/v1/messages"
+        self.api_url = "https://api.anthropic.com/v1/messages"
         self._analyzer = LongitudinalAnalyzer()
 
     async def suggest(self, user_id: str, db) -> dict:
@@ -98,9 +98,9 @@ class ContextSeeder:
         Return a suggested arc for this user at this moment.
         Always returns a valid dict — never raises.
         """
-        now        = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
         time_label = self._time_bucket(now.hour)
-        day_label  = _DAYS[now.weekday()]
+        day_label = _DAYS[now.weekday()]
         is_weekend = now.weekday() >= 5
 
         recent_sessions = self._load_recent_sessions(db, user_id)
@@ -130,9 +130,13 @@ class ContextSeeder:
                 result["method"] = "claude"
                 return result
             except Exception as e:
-                print(f"Context seeder Claude call failed: {e} — using heuristic fallback")
+                print(
+                    f"Context seeder Claude call failed: {e} — using heuristic fallback"
+                )
 
-        return self._heuristic(time_label, recent_sessions, context_signals, slot_pattern)
+        return self._heuristic(
+            time_label, recent_sessions, context_signals, slot_pattern
+        )
 
     # ── DB helpers ────────────────────────────────────────────────────────────
 
@@ -140,22 +144,27 @@ class ContextSeeder:
         """Load up to 5 most recent sessions for this user."""
         try:
             from sqlalchemy import text
-            rows = db.execute(text("""
+
+            rows = db.execute(
+                text("""
                 SELECT source_emotion, target_emotion, status, started_at, completed_at
                 FROM sessions
                 WHERE user_id = cast(:uid as uuid)
                 ORDER BY created_at DESC
                 LIMIT 5
-            """), {"uid": user_id}).fetchall()
+            """),
+                {"uid": user_id},
+            ).fetchall()
 
             return [
                 {
-                    "source":   r.source_emotion,
-                    "target":   r.target_emotion,
-                    "status":   r.status,
+                    "source": r.source_emotion,
+                    "target": r.target_emotion,
+                    "status": r.status,
                     "duration": (
                         int((r.completed_at - r.started_at).total_seconds() / 60)
-                        if r.completed_at and r.started_at else None
+                        if r.completed_at and r.started_at
+                        else None
                     ),
                 }
                 for r in rows
@@ -181,7 +190,9 @@ class ContextSeeder:
             context_lines.append("Recent sessions (newest first):")
             for s in recent_sessions:
                 dur = f", {s['duration']} min" if s["duration"] else ""
-                context_lines.append(f"  - {s['source']} → {s['target']} [{s['status']}{dur}]")
+                context_lines.append(
+                    f"  - {s['source']} → {s['target']} [{s['status']}{dur}]"
+                )
         else:
             context_lines.append("No recent session history.")
         if slot_pattern:
@@ -196,15 +207,15 @@ class ContextSeeder:
             response = await client.post(
                 self.api_url,
                 headers={
-                    "Content-Type":      "application/json",
-                    "x-api-key":         self.settings.anthropic_api_key,
+                    "Content-Type": "application/json",
+                    "x-api-key": self.settings.anthropic_api_key,
                     "anthropic-version": "2023-06-01",
                 },
                 json={
-                    "model":      "claude-haiku-4-5",
+                    "model": "claude-haiku-4-5",
                     "max_tokens": 200,
-                    "system":     _ADJUST_SYSTEM_PROMPT,
-                    "messages":   [{"role": "user", "content": context}],
+                    "system": _ADJUST_SYSTEM_PROMPT,
+                    "messages": [{"role": "user", "content": context}],
                 },
             )
             response.raise_for_status()
@@ -229,10 +240,12 @@ class ContextSeeder:
                 target = self._adjacent_down(source)
 
             return {
-                "source":         source,
-                "target":         target,
-                "interpretation": parsed.get("interpretation", f"From {source} to {target}"),
-                "confidence":     float(parsed.get("confidence", 0.7)),
+                "source": source,
+                "target": target,
+                "interpretation": parsed.get(
+                    "interpretation", f"From {source} to {target}"
+                ),
+                "confidence": float(parsed.get("confidence", 0.7)),
             }
 
     # ── Heuristic fallback ────────────────────────────────────────────────────
@@ -254,7 +267,10 @@ class ContextSeeder:
         if recent_sessions:
             last = recent_sessions[0]
             high_energy = {"energetic", "euphoric", "angry", "tense"}
-            if last["status"] in ("completed", "active") and last["target"] in high_energy:
+            if (
+                last["status"] in ("completed", "active")
+                and last["target"] in high_energy
+            ):
                 source = last["target"]
                 target = "peaceful"
 
@@ -264,12 +280,12 @@ class ContextSeeder:
         )
 
         return {
-            "source":          source,
-            "target":          target,
-            "interpretation":  interpretation,
-            "confidence":      0.6,
+            "source": source,
+            "target": target,
+            "interpretation": interpretation,
+            "confidence": 0.6,
             "context_signals": context_signals,
-            "method":          "heuristic",
+            "method": "heuristic",
         }
 
     # ── Utilities ─────────────────────────────────────────────────────────────
@@ -285,9 +301,17 @@ class ContextSeeder:
     def _adjacent_down(emotion: str) -> str:
         """Return a naturally lower-energy adjacent emotion."""
         down = {
-            "energetic": "happy", "euphoric": "happy",  "angry":       "tense",
-            "tense":     "neutral", "happy":  "neutral", "focused":     "peaceful",
-            "romantic":  "peaceful", "nostalgic": "peaceful", "neutral": "peaceful",
-            "melancholic": "sad",  "sad":    "neutral",  "peaceful":    "neutral",
+            "energetic": "happy",
+            "euphoric": "happy",
+            "angry": "tense",
+            "tense": "neutral",
+            "happy": "neutral",
+            "focused": "peaceful",
+            "romantic": "peaceful",
+            "nostalgic": "peaceful",
+            "neutral": "peaceful",
+            "melancholic": "sad",
+            "sad": "neutral",
+            "peaceful": "neutral",
         }
         return down.get(emotion, "peaceful")

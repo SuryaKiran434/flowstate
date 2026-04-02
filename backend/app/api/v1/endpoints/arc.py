@@ -26,39 +26,40 @@ from app.services.graph_learner import GraphLearner
 from app.services.longitudinal_analyzer import LongitudinalAnalyzer
 from app.services.mood_parser import MoodParser, EMOTION_DESCRIPTIONS, VALID_EMOTIONS
 
-router   = APIRouter(prefix="/arc", tags=["arc"])
+router = APIRouter(prefix="/arc", tags=["arc"])
 
-planner  = ArcPlanner()
-parser   = MoodParser()
-seeder   = ContextSeeder()
-learner  = GraphLearner()
+planner = ArcPlanner()
+parser = MoodParser()
+seeder = ContextSeeder()
+learner = GraphLearner()
 analyzer = LongitudinalAnalyzer()
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _serialize_track(t) -> dict:
     return {
-        "spotify_id":         t.spotify_id,
-        "title":              t.title,
-        "artist":             t.artist,
-        "duration_ms":        t.duration_ms,
-        "emotion_label":      t.emotion_label,
+        "spotify_id": t.spotify_id,
+        "title": t.title,
+        "artist": t.artist,
+        "duration_ms": t.duration_ms,
+        "emotion_label": t.emotion_label,
         "emotion_confidence": t.emotion_confidence,
-        "energy":             t.energy,
-        "valence":            t.valence,
-        "tempo":              t.tempo,
-        "language":           getattr(t, "language", "en"),
+        "energy": t.energy,
+        "valence": t.valence,
+        "tempo": t.tempo,
+        "language": getattr(t, "language", "en"),
     }
 
 
 def _serialize_segment(seg) -> dict:
     return {
-        "emotion":          seg["emotion"],
-        "segment_index":    seg["segment_index"],
+        "emotion": seg["emotion"],
+        "segment_index": seg["segment_index"],
         "energy_direction": seg["energy_direction"],
-        "track_count":      seg["track_count"],
-        "tracks":           [_serialize_track(t) for t in seg["tracks"]],
+        "track_count": seg["track_count"],
+        "tracks": [_serialize_track(t) for t in seg["tracks"]],
     }
 
 
@@ -66,8 +67,7 @@ def _arc_warnings(arc: dict) -> list[str]:
     if arc["readiness"]["has_gaps"]:
         missing = arc["readiness"]["missing_emotions"]
         return [
-            f"No tracks found for: {', '.join(missing)}. "
-            "These segments were skipped."
+            f"No tracks found for: {', '.join(missing)}. These segments were skipped."
         ]
     return []
 
@@ -82,10 +82,14 @@ def _get_planner(user_id: str, db) -> tuple[ArcPlanner, bool]:
 
 def _load_session(session_id: UUID, user_id: str, db) -> tuple:
     """Return (session, session_tracks) or raise 404."""
-    session = db.query(SessionModel).filter(
-        SessionModel.id == session_id,
-        SessionModel.user_id == user_id,
-    ).first()
+    session = (
+        db.query(SessionModel)
+        .filter(
+            SessionModel.id == session_id,
+            SessionModel.user_id == user_id,
+        )
+        .first()
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -105,11 +109,14 @@ def _current_emotion(session_tracks, position: int, fallback: str) -> str:
 
 # ─── Request models ───────────────────────────────────────────────────────────
 
+
 class ArcRequest(BaseModel):
     """Generate a full arc from a natural language mood description."""
 
     mood_text: str = Field(
-        ..., min_length=3, max_length=500,
+        ...,
+        min_length=3,
+        max_length=500,
         description="Natural language mood description",
         example="I'm stressed from work and want to wind down",
     )
@@ -139,21 +146,22 @@ class ArcPreviewRequest(BaseModel):
 class ReplanRequest(BaseModel):
     """Mid-session re-plan triggered by skip behaviour."""
 
-    session_id:                 UUID
-    current_position:           int = Field(..., ge=0)
+    session_id: UUID
+    current_position: int = Field(..., ge=0)
     remaining_duration_minutes: int = Field(default=20, ge=1, le=120)
 
 
 class AdjustRequest(BaseModel):
     """Mid-session natural language arc adjustment."""
 
-    session_id:                 UUID
-    current_position:           int = Field(..., ge=0)
-    command:                    str = Field(..., min_length=1, max_length=300)
+    session_id: UUID
+    current_position: int = Field(..., ge=0)
+    command: str = Field(..., min_length=1, max_length=300)
     remaining_duration_minutes: int = Field(default=20, ge=1, le=120)
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
+
 
 @router.post("/generate")
 async def generate_arc(
@@ -171,7 +179,8 @@ async def generate_arc(
     """
     # Step 1 — resolve emotions
     pre = (
-        request.source_emotion and request.target_emotion
+        request.source_emotion
+        and request.target_emotion
         and request.source_emotion in VALID_EMOTIONS
         and request.target_emotion in VALID_EMOTIONS
         and request.source_emotion != request.target_emotion
@@ -179,14 +188,14 @@ async def generate_arc(
     if pre:
         source = request.source_emotion
         target = request.target_emotion
-        mood   = {
-            "source":         source,
-            "target":         target,
+        mood = {
+            "source": source,
+            "target": target,
             "interpretation": request.mood_text,
-            "method":         "preresolved",
+            "method": "preresolved",
         }
     else:
-        mood   = await parser.parse(request.mood_text)
+        mood = await parser.parse(request.mood_text)
         source = mood["source"]
         target = mood["target"]
 
@@ -204,26 +213,29 @@ async def generate_arc(
     )
 
     if arc.get("error") == "library_not_ready":
-        raise HTTPException(status_code=202, detail={
-            "error":   "library_not_ready",
-            "message": arc["message"],
-        })
+        raise HTTPException(
+            status_code=202,
+            detail={
+                "error": "library_not_ready",
+                "message": arc["message"],
+            },
+        )
 
     return {
-        "mood_input":          request.mood_text,
+        "mood_input": request.mood_text,
         "mood_interpretation": mood["interpretation"],
-        "parse_method":        mood["method"],
-        "personalised":        personalised,
-        "source_emotion":      source,
-        "target_emotion":      target,
-        "arc_path":            arc["arc_path"],
-        "segments":            [_serialize_segment(s) for s in arc["segments"]],
-        "tracks":              [_serialize_track(t) for t in arc["tracks"]],
-        "total_tracks":        arc["total_tracks"],
-        "total_duration_ms":   arc["total_duration_ms"],
-        "duration_minutes":    request.duration_minutes,
-        "warnings":            _arc_warnings(arc),
-        "readiness":           arc["readiness"],
+        "parse_method": mood["method"],
+        "personalised": personalised,
+        "source_emotion": source,
+        "target_emotion": target,
+        "arc_path": arc["arc_path"],
+        "segments": [_serialize_segment(s) for s in arc["segments"]],
+        "tracks": [_serialize_track(t) for t in arc["tracks"]],
+        "total_tracks": arc["total_tracks"],
+        "total_duration_ms": arc["total_duration_ms"],
+        "duration_minutes": request.duration_minutes,
+        "warnings": _arc_warnings(arc),
+        "readiness": arc["readiness"],
     }
 
 
@@ -267,8 +279,7 @@ async def replan_arc(
         replan_reason = "Re-routed from current emotional position"
 
     excluded_ids = {
-        t.track_id for t in session_tracks
-        if t.position <= request.current_position
+        t.track_id for t in session_tracks if t.position <= request.current_position
     }
 
     req_planner, personalised = _get_planner(user_id, db)
@@ -282,26 +293,29 @@ async def replan_arc(
     )
 
     if arc.get("error") == "library_not_ready":
-        raise HTTPException(status_code=202, detail={
-            "error":   "library_not_ready",
-            "message": arc["message"],
-        })
+        raise HTTPException(
+            status_code=202,
+            detail={
+                "error": "library_not_ready",
+                "message": arc["message"],
+            },
+        )
 
     return {
-        "replan_reason":    replan_reason,
-        "skips_detected":   consecutive_skips,
+        "replan_reason": replan_reason,
+        "skips_detected": consecutive_skips,
         "original_emotion": current_emotion,
-        "personalised":     personalised,
-        "source_emotion":   replan_source,
-        "target_emotion":   target_emotion,
-        "arc_path":         arc["arc_path"],
-        "segments":         [_serialize_segment(s) for s in arc["segments"]],
-        "tracks":           [_serialize_track(t) for t in arc["tracks"]],
-        "total_tracks":     arc["total_tracks"],
+        "personalised": personalised,
+        "source_emotion": replan_source,
+        "target_emotion": target_emotion,
+        "arc_path": arc["arc_path"],
+        "segments": [_serialize_segment(s) for s in arc["segments"]],
+        "tracks": [_serialize_track(t) for t in arc["tracks"]],
+        "total_tracks": arc["total_tracks"],
         "total_duration_ms": arc["total_duration_ms"],
         "duration_minutes": request.remaining_duration_minutes,
-        "warnings":         _arc_warnings(arc),
-        "readiness":        arc["readiness"],
+        "warnings": _arc_warnings(arc),
+        "readiness": arc["readiness"],
     }
 
 
@@ -334,8 +348,7 @@ async def adjust_arc(
         new_target = session.target_emotion
 
     excluded_ids = {
-        t.track_id for t in session_tracks
-        if t.position <= request.current_position
+        t.track_id for t in session_tracks if t.position <= request.current_position
     }
 
     req_planner, personalised = _get_planner(user_id, db)
@@ -349,26 +362,29 @@ async def adjust_arc(
     )
 
     if arc.get("error") == "library_not_ready":
-        raise HTTPException(status_code=202, detail={
-            "error":   "library_not_ready",
-            "message": arc["message"],
-        })
+        raise HTTPException(
+            status_code=202,
+            detail={
+                "error": "library_not_ready",
+                "message": arc["message"],
+            },
+        )
 
     return {
-        "command":               request.command,
+        "command": request.command,
         "command_interpretation": adjustment["interpretation"],
-        "parse_method":          adjustment["method"],
-        "personalised":          personalised,
-        "source_emotion":        current_emotion,
-        "target_emotion":        new_target,
-        "arc_path":              arc["arc_path"],
-        "segments":              [_serialize_segment(s) for s in arc["segments"]],
-        "tracks":                [_serialize_track(t) for t in arc["tracks"]],
-        "total_tracks":          arc["total_tracks"],
-        "total_duration_ms":     arc["total_duration_ms"],
-        "duration_minutes":      request.remaining_duration_minutes,
-        "warnings":              _arc_warnings(arc),
-        "readiness":             arc["readiness"],
+        "parse_method": adjustment["method"],
+        "personalised": personalised,
+        "source_emotion": current_emotion,
+        "target_emotion": new_target,
+        "arc_path": arc["arc_path"],
+        "segments": [_serialize_segment(s) for s in arc["segments"]],
+        "tracks": [_serialize_track(t) for t in arc["tracks"]],
+        "total_tracks": arc["total_tracks"],
+        "total_duration_ms": arc["total_duration_ms"],
+        "duration_minutes": request.remaining_duration_minutes,
+        "warnings": _arc_warnings(arc),
+        "readiness": arc["readiness"],
     }
 
 
@@ -400,14 +416,14 @@ def get_user_graph(
         adjustments:  list  — edges that differ from the global default
         total_signals: int  — total skip + completion observations
     """
-    adjustments  = learner.explain_adjustments(user_id, db)
-    user_graph   = learner.load_user_graph(user_id, db)
+    adjustments = learner.explain_adjustments(user_id, db)
+    user_graph = learner.load_user_graph(user_id, db)
     personalised = user_graph is not None
 
     return {
-        "personalised":  personalised,
-        "adjustments":   adjustments,
-        "global_graph":  EMOTION_GRAPH,
+        "personalised": personalised,
+        "adjustments": adjustments,
+        "global_graph": EMOTION_GRAPH,
     }
 
 
@@ -428,15 +444,15 @@ def preview_arc_path(
     path = planner.find_emotional_path(source, target)
 
     return {
-        "source_emotion":    source,
-        "target_emotion":    target,
-        "arc_path":          path,
-        "step_count":        len(path),
-        "path_with_energy":  [
+        "source_emotion": source,
+        "target_emotion": target,
+        "arc_path": path,
+        "step_count": len(path),
+        "path_with_energy": [
             {
-                "emotion":       e,
+                "emotion": e,
                 "energy_center": ENERGY_CENTERS.get(e, 0.5),
-                "neighbors":     list(EMOTION_GRAPH.get(e, {}).keys()),
+                "neighbors": list(EMOTION_GRAPH.get(e, {}).keys()),
             }
             for e in path
         ],
@@ -451,10 +467,10 @@ def get_valid_emotions(
     return {
         "emotions": [
             {
-                "label":         emotion,
-                "description":   EMOTION_DESCRIPTIONS[emotion],
+                "label": emotion,
+                "description": EMOTION_DESCRIPTIONS[emotion],
                 "energy_center": ENERGY_CENTERS.get(emotion, 0.5),
-                "neighbors":     list(EMOTION_GRAPH.get(emotion, {}).keys()),
+                "neighbors": list(EMOTION_GRAPH.get(emotion, {}).keys()),
             }
             for emotion in VALID_EMOTIONS
         ],

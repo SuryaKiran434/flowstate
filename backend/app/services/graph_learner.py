@@ -39,11 +39,11 @@ from app.services.arc_planner import EMOTION_GRAPH
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
 
-SKIP_PENALTY      = 0.4   # each skip adds this to the multiplier (makes edge heavier)
-COMPLETION_BONUS  = 0.25  # each completion subtracts this (makes edge lighter)
-MIN_MULT          = 0.4   # never reduce an edge below 40 % of its base weight
-MAX_MULT          = 3.0   # never inflate an edge above 3× its base weight
-MIN_SIGNALS       = 5     # minimum total observations before personalisation kicks in
+SKIP_PENALTY = 0.4  # each skip adds this to the multiplier (makes edge heavier)
+COMPLETION_BONUS = 0.25  # each completion subtracts this (makes edge lighter)
+MIN_MULT = 0.4  # never reduce an edge below 40 % of its base weight
+MAX_MULT = 3.0  # never inflate an edge above 3× its base weight
+MIN_SIGNALS = 5  # minimum total observations before personalisation kicks in
 
 
 class GraphLearner:
@@ -78,42 +78,48 @@ class GraphLearner:
             return []
 
         adjusted = self._apply_adjustments(completions, skips)
-        result   = []
+        result = []
 
         for from_e, neighbors in EMOTION_GRAPH.items():
             for to_e, base_w in neighbors.items():
                 adj_w = adjusted.get(from_e, {}).get(to_e, base_w)
-                if abs(adj_w - base_w) > 0.01:   # only report changed edges
-                    key  = (from_e, to_e)
+                if abs(adj_w - base_w) > 0.01:  # only report changed edges
+                    key = (from_e, to_e)
                     mult = adj_w / base_w if base_w else 1.0
-                    result.append({
-                        "from":            from_e,
-                        "to":              to_e,
-                        "base_weight":     round(base_w, 3),
-                        "adjusted_weight": round(adj_w, 3),
-                        "completions":     completions[key],
-                        "skips":           skips[key],
-                        "multiplier":      round(mult, 3),
-                    })
+                    result.append(
+                        {
+                            "from": from_e,
+                            "to": to_e,
+                            "base_weight": round(base_w, 3),
+                            "adjusted_weight": round(adj_w, 3),
+                            "completions": completions[key],
+                            "skips": skips[key],
+                            "multiplier": round(mult, 3),
+                        }
+                    )
 
-        return sorted(result, key=lambda x: abs(x["adjusted_weight"] - x["base_weight"]), reverse=True)
+        return sorted(
+            result,
+            key=lambda x: abs(x["adjusted_weight"] - x["base_weight"]),
+            reverse=True,
+        )
 
     # ── DB signal query ───────────────────────────────────────────────────────
 
-    def _query_signals(
-        self, user_id: str, db
-    ) -> tuple[defaultdict, defaultdict]:
+    def _query_signals(self, user_id: str, db) -> tuple[defaultdict, defaultdict]:
         """
         Query consecutive-track pairs across all completed/active sessions for
         this user. Returns (completions, skips) defaultdict counters keyed by
         (from_emotion, to_emotion) tuples.
         """
         completions: defaultdict = defaultdict(int)
-        skips:       defaultdict = defaultdict(int)
+        skips: defaultdict = defaultdict(int)
 
         try:
             from sqlalchemy import text
-            rows = db.execute(text("""
+
+            rows = db.execute(
+                text("""
                 SELECT
                     st1.emotion_label  AS from_emotion,
                     st2.emotion_label  AS to_emotion,
@@ -130,7 +136,9 @@ class GraphLearner:
                   AND st1.emotion_label  IS NOT NULL
                   AND st2.emotion_label  IS NOT NULL
                   AND st1.emotion_label  != st2.emotion_label
-            """), {"uid": user_id}).fetchall()
+            """),
+                {"uid": user_id},
+            ).fetchall()
 
         except Exception:
             return completions, skips
@@ -156,9 +164,9 @@ class GraphLearner:
 
         for from_e, neighbors in adjusted.items():
             for to_e in neighbors:
-                key       = (from_e, to_e)
-                n_skips   = skips[key]
-                n_comps   = completions[key]
+                key = (from_e, to_e)
+                n_skips = skips[key]
+                n_comps = completions[key]
 
                 if n_skips == 0 and n_comps == 0:
                     continue  # no signal for this edge — keep default

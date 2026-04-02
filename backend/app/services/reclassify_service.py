@@ -30,11 +30,13 @@ log = logging.getLogger(__name__)
 
 # ── Typed error ────────────────────────────────────────────────────────────────
 
+
 class ModelNotAvailableError(Exception):
     """Raised when the classifier .joblib file is absent or cannot be loaded."""
 
 
 # ── Service ───────────────────────────────────────────────────────────────────
+
 
 class ReclassifyService:
     """
@@ -82,7 +84,8 @@ class ReclassifyService:
             ) from exc
 
         # ── Load user tracks with extracted features ──────────────────────────
-        feat_rows = db.execute(text("""
+        feat_rows = db.execute(
+            text("""
             SELECT
                 tf.track_id,
                 tf.mfcc_mean, tf.mfcc_std, tf.chroma_mean,
@@ -92,33 +95,41 @@ class ReclassifyService:
             JOIN track_features tf ON ut.track_id = tf.track_id
             WHERE ut.user_id    = cast(:uid AS uuid)
               AND tf.mfcc_mean  IS NOT NULL
-        """), {"uid": user_id}).fetchall()
+        """),
+            {"uid": user_id},
+        ).fetchall()
 
         # Count total user tracks (including those without features) for skipped calc
-        total_row = db.execute(text("""
+        total_row = db.execute(
+            text("""
             SELECT COUNT(DISTINCT ut.track_id) AS total
             FROM user_tracks ut
             LEFT JOIN track_features tf ON ut.track_id = tf.track_id
             WHERE ut.user_id = cast(:uid AS uuid)
-        """), {"uid": user_id}).fetchone()
+        """),
+            {"uid": user_id},
+        ).fetchone()
         total_tracks = total_row.total if total_row else 0
 
         if not feat_rows:
             return {
-                "updated":            0,
-                "skipped":            total_tracks,
+                "updated": 0,
+                "skipped": total_tracks,
                 "label_distribution": {},
             }
 
         # ── Build feature matrix ───────────────────────────────────────────────
         track_ids = [r.track_id for r in feat_rows]
         X = np.array(
-            [EmotionClassifier.build_feature_vector(dict(r._mapping)) for r in feat_rows],
+            [
+                EmotionClassifier.build_feature_vector(dict(r._mapping))
+                for r in feat_rows
+            ],
             dtype=np.float32,
         )
 
         # ── Batch predict ─────────────────────────────────────────────────────
-        predictions = clf.predict_batch(X)   # list of (label, confidence)
+        predictions = clf.predict_batch(X)  # list of (label, confidence)
 
         # ── Bulk UPDATE using VALUES clause ───────────────────────────────────
         # Build a Python list of dicts for executemany — one round trip per chunk.
@@ -148,11 +159,13 @@ class ReclassifyService:
 
         log.info(
             "Reclassified %d tracks for user %s (skipped %d without features)",
-            len(feat_rows), user_id, skipped,
+            len(feat_rows),
+            user_id,
+            skipped,
         )
 
         return {
-            "updated":            len(feat_rows),
-            "skipped":            skipped,
+            "updated": len(feat_rows),
+            "skipped": skipped,
             "label_distribution": distribution,
         }

@@ -14,8 +14,18 @@ _reclassifier = ReclassifyService()
 router = APIRouter(prefix="/tracks", tags=["tracks"])
 
 VALID_EMOTIONS = {
-    "energetic", "happy", "euphoric", "peaceful", "focused",
-    "romantic", "nostalgic", "neutral", "melancholic", "sad", "tense", "angry"
+    "energetic",
+    "happy",
+    "euphoric",
+    "peaceful",
+    "focused",
+    "romantic",
+    "nostalgic",
+    "neutral",
+    "melancholic",
+    "sad",
+    "tense",
+    "angry",
 }
 
 
@@ -26,7 +36,8 @@ def get_user_tracks(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         SELECT
             t.id, t.name, t.artist_names, t.album_name,
             t.duration_ms, t.popularity,
@@ -42,7 +53,9 @@ def get_user_tracks(
         WHERE ut.user_id = cast(:uid as uuid)
         ORDER BY ut.saved_at DESC NULLS LAST
         LIMIT :limit OFFSET :offset
-    """), {"uid": user_id, "limit": limit, "offset": offset}).fetchall()
+    """),
+        {"uid": user_id, "limit": limit, "offset": offset},
+    ).fetchall()
     return {
         "tracks": [dict(r._mapping) for r in rows],
         "limit": limit,
@@ -56,7 +69,8 @@ def get_library_stats(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    stats = db.execute(text("""
+    stats = db.execute(
+        text("""
         SELECT
             COUNT(DISTINCT ut.track_id)                    AS total_tracks,
             COUNT(tf.track_id)                             AS tracks_with_features,
@@ -70,7 +84,9 @@ def get_library_stats(
         FROM user_tracks ut
         LEFT JOIN track_features tf ON ut.track_id = tf.track_id
         WHERE ut.user_id = cast(:uid as uuid)
-    """), {"uid": user_id}).fetchone()
+    """),
+        {"uid": user_id},
+    ).fetchone()
     return dict(stats._mapping)
 
 
@@ -83,7 +99,8 @@ def get_emotion_distribution(
     Returns the distribution of emotion labels across the user's library.
     Used by the frontend to show the user's emotional profile.
     """
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         SELECT
             tf.emotion_label,
             COUNT(*) AS track_count,
@@ -96,7 +113,9 @@ def get_emotion_distribution(
           AND tf.emotion_label IS NOT NULL
         GROUP BY tf.emotion_label
         ORDER BY track_count DESC
-    """), {"uid": user_id}).fetchall()
+    """),
+        {"uid": user_id},
+    ).fetchall()
 
     total = sum(r.track_count for r in rows)
     return {
@@ -132,10 +151,11 @@ def get_tracks_by_emotion(
     if emotion not in VALID_EMOTIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid emotion '{emotion}'. Valid: {sorted(VALID_EMOTIONS)}"
+            detail=f"Invalid emotion '{emotion}'. Valid: {sorted(VALID_EMOTIONS)}",
         )
 
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         SELECT
             t.id AS spotify_id,
             t.name, t.artist_names, t.album_name,
@@ -152,19 +172,21 @@ def get_tracks_by_emotion(
           AND tf.energy BETWEEN :energy_min AND :energy_max
         ORDER BY tf.emotion_confidence DESC, tf.energy ASC
         LIMIT :limit
-    """), {
-        "uid":            user_id,
-        "emotion":        emotion,
-        "min_confidence": min_confidence,
-        "energy_min":     energy_min,
-        "energy_max":     energy_max,
-        "limit":          limit,
-    }).fetchall()
+    """),
+        {
+            "uid": user_id,
+            "emotion": emotion,
+            "min_confidence": min_confidence,
+            "energy_min": energy_min,
+            "energy_max": energy_max,
+            "limit": limit,
+        },
+    ).fetchall()
 
     return {
         "emotion": emotion,
-        "tracks":  [dict(r._mapping) for r in rows],
-        "count":   len(rows),
+        "tracks": [dict(r._mapping) for r in rows],
+        "count": len(rows),
     }
 
 
@@ -181,7 +203,8 @@ def get_library_readiness(
       - "processing": Tracks seeded but not yet classified (Airflow DAG pending)
       - "ready":      Tracks with emotion labels exist — arc generation works
     """
-    row = db.execute(text("""
+    row = db.execute(
+        text("""
         SELECT
             COUNT(DISTINCT ut.track_id)  AS total_tracks,
             COUNT(tf.track_id)           AS tracks_with_features,
@@ -189,15 +212,19 @@ def get_library_readiness(
         FROM user_tracks ut
         LEFT JOIN track_features tf ON ut.track_id = tf.track_id
         WHERE ut.user_id = cast(:uid as uuid)
-    """), {"uid": user_id}).fetchone()
+    """),
+        {"uid": user_id},
+    ).fetchone()
 
-    total    = row.total_tracks or 0
+    total = row.total_tracks or 0
     features = row.tracks_with_features or 0
     emotions = row.tracks_with_emotions or 0
 
     if total == 0:
         state = "empty"
-        message = "Your library is being prepared\u2026 this usually takes under a minute."
+        message = (
+            "Your library is being prepared\u2026 this usually takes under a minute."
+        )
     elif emotions == 0:
         state = "processing"
         message = (
@@ -212,12 +239,12 @@ def get_library_readiness(
         )
 
     return {
-        "state":                state,
-        "total_tracks":         total,
+        "state": state,
+        "total_tracks": total,
         "tracks_with_features": features,
         "tracks_with_emotions": emotions,
-        "ready_for_arc":        emotions > 0,
-        "message":              message,
+        "ready_for_arc": emotions > 0,
+        "message": message,
     }
 
 
@@ -231,7 +258,8 @@ def get_arc_pool(
     Used by the arc planner to build its TrackCandidate pool in one query
     instead of N queries per emotion segment.
     """
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         SELECT
             tf.track_id AS id,
             t.id        AS spotify_id,
@@ -247,11 +275,13 @@ def get_arc_pool(
         WHERE ut.user_id = cast(:uid as uuid)
           AND tf.emotion_label IS NOT NULL
         ORDER BY tf.emotion_label, tf.energy
-    """), {"uid": user_id}).fetchall()
+    """),
+        {"uid": user_id},
+    ).fetchall()
 
     return {
         "tracks": [dict(r._mapping) for r in rows],
-        "count":  len(rows),
+        "count": len(rows),
     }
 
 
@@ -265,16 +295,16 @@ def get_model_status(
     Reads the JSON sidecar written by train_classifier.py — no DB call required.
     The endpoint is always safe to call: returns available=False when no model exists.
     """
-    meta             = EmotionClassifier.load_meta()
-    model_available  = bool(meta) and os.path.exists(_DEFAULT_MODEL_PATH)
+    meta = EmotionClassifier.load_meta()
+    model_available = bool(meta) and os.path.exists(_DEFAULT_MODEL_PATH)
     return {
         "model_available": model_available,
-        "trained_at":      meta.get("trained_at"),
-        "macro_f1":        meta.get("macro_f1"),
-        "macro_f1_std":    meta.get("macro_f1_std"),
-        "n_samples":       meta.get("n_samples"),
-        "per_class_f1":    meta.get("per_class_f1"),
-        "can_reclassify":  model_available,
+        "trained_at": meta.get("trained_at"),
+        "macro_f1": meta.get("macro_f1"),
+        "macro_f1_std": meta.get("macro_f1_std"),
+        "n_samples": meta.get("n_samples"),
+        "per_class_f1": meta.get("per_class_f1"),
+        "can_reclassify": model_available,
     }
 
 
@@ -291,17 +321,24 @@ def get_language_stats(
     is inherently language-agnostic (it operates on raw audio features), so
     tracks in any language can participate in emotionally coherent arcs.
     """
-    from app.services.language_detector import detect as detect_language, LANGUAGE_NAMES, LANGUAGE_FLAGS
+    from app.services.language_detector import (
+        detect as detect_language,
+        LANGUAGE_NAMES,
+        LANGUAGE_FLAGS,
+    )
     from collections import Counter
 
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         SELECT t.name, t.artist_names
         FROM user_tracks ut
         JOIN tracks t ON ut.track_id = t.id
         JOIN track_features tf ON t.id = tf.track_id
         WHERE ut.user_id = cast(:uid as uuid)
           AND tf.emotion_label IS NOT NULL
-    """), {"uid": user_id}).fetchall()
+    """),
+        {"uid": user_id},
+    ).fetchall()
 
     counts: Counter = Counter()
     for r in rows:
@@ -311,19 +348,19 @@ def get_language_stats(
     total = sum(counts.values())
     distribution = [
         {
-            "language":   lang,
-            "name":       LANGUAGE_NAMES.get(lang, lang.upper()),
-            "flag":       LANGUAGE_FLAGS.get(lang, "🌐"),
-            "count":      count,
+            "language": lang,
+            "name": LANGUAGE_NAMES.get(lang, lang.upper()),
+            "flag": LANGUAGE_FLAGS.get(lang, "🌐"),
+            "count": count,
             "percentage": round(count / total * 100, 1) if total else 0,
         }
         for lang, count in counts.most_common()
     ]
     return {
-        "total_classified":  total,
-        "language_count":    len(counts),
-        "multilingual":      len(counts) > 1,
-        "distribution":      distribution,
+        "total_classified": total,
+        "language_count": len(counts),
+        "multilingual": len(counts) > 1,
+        "distribution": distribution,
     }
 
 

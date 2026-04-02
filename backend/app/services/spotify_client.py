@@ -33,6 +33,7 @@ def generate_code_challenge(verifier: str) -> str:
 def build_auth_url(state: str, code_challenge: str) -> str:
     """Build the Spotify authorization URL with PKCE parameters."""
     from urllib.parse import urlencode
+
     params = {
         "client_id": settings.spotify_client_id,
         "response_type": "code",
@@ -97,6 +98,7 @@ def token_expires_at(expires_in_seconds: int) -> datetime:
 
 # ── Personal Library Helpers (used by Airflow DAG) ────────────────────────────
 
+
 async def get_user_playlists(access_token: str) -> list[dict]:
     """
     Fetch all of the current user's playlists (public + private).
@@ -132,7 +134,10 @@ async def get_playlist_tracks(access_token: str, playlist_id: str) -> list[dict]
     """
     tracks = []
     url = f"https://api.spotify.com/v1/playlists/{playlist_id}/items"
-    params = {"limit": 50, "fields": "next,items(track(id,name,artists,album,duration_ms,preview_url,popularity))"}
+    params = {
+        "limit": 50,
+        "fields": "next,items(track(id,name,artists,album,duration_ms,preview_url,popularity))",
+    }
 
     async with httpx.AsyncClient() as client:
         while url:
@@ -188,7 +193,9 @@ async def get_liked_tracks(access_token: str, limit: int = 200) -> list[dict]:
     return tracks
 
 
-async def get_top_tracks(access_token: str, time_range: str = "medium_term") -> list[dict]:
+async def get_top_tracks(
+    access_token: str, time_range: str = "medium_term"
+) -> list[dict]:
     """
     Fetch the user's top tracks.
     Requires: user-top-read scope.
@@ -205,7 +212,9 @@ async def get_top_tracks(access_token: str, time_range: str = "medium_term") -> 
         return resp.json().get("items", [])
 
 
-async def get_top_artists(access_token: str, time_range: str = "medium_term") -> list[dict]:
+async def get_top_artists(
+    access_token: str, time_range: str = "medium_term"
+) -> list[dict]:
     """
     Fetch the user's top artists, then get their top tracks.
     Requires: user-top-read scope.

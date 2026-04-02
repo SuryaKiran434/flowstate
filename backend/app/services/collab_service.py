@@ -47,7 +47,9 @@ class SessionClosedError(CollabError):
     pass
 
 
-def _shortest_distances(source: str, graph: dict[str, dict[str, float]]) -> dict[str, float]:
+def _shortest_distances(
+    source: str, graph: dict[str, dict[str, float]]
+) -> dict[str, float]:
     """
     Dijkstra from source → dict of {emotion: min_cost}.
     Unreachable nodes get infinity.
@@ -129,7 +131,9 @@ class CollabArcService:
         Raises SessionNotFoundError for unknown codes, SessionClosedError when
         the session is no longer open.
         """
-        session = db.query(CollabSession).filter_by(invite_code=invite_code.upper()).first()
+        session = (
+            db.query(CollabSession).filter_by(invite_code=invite_code.upper()).first()
+        )
         if not session:
             raise SessionNotFoundError(f"Session '{invite_code}' not found")
         if session.status != "open":
@@ -139,44 +143,54 @@ class CollabArcService:
         if source_emotion not in VALID_EMOTIONS:
             raise CollabError(f"Invalid source emotion: {source_emotion}")
 
-        existing = db.query(CollabParticipant).filter_by(
-            session_id=session.id,
-            user_id=str(user_id),
-        ).first()
+        existing = (
+            db.query(CollabParticipant)
+            .filter_by(
+                session_id=session.id,
+                user_id=str(user_id),
+            )
+            .first()
+        )
 
         if existing:
             existing.source_emotion = source_emotion
         else:
-            db.add(CollabParticipant(
-                session_id=session.id,
-                user_id=str(user_id),
-                source_emotion=source_emotion,
-            ))
+            db.add(
+                CollabParticipant(
+                    session_id=session.id,
+                    user_id=str(user_id),
+                    source_emotion=source_emotion,
+                )
+            )
 
         db.flush()
         return session
 
     def get_session(self, invite_code: str, db) -> dict:
         """Return session metadata + all participants."""
-        session = db.query(CollabSession).filter_by(invite_code=invite_code.upper()).first()
+        session = (
+            db.query(CollabSession).filter_by(invite_code=invite_code.upper()).first()
+        )
         if not session:
             raise SessionNotFoundError(f"Session '{invite_code}' not found")
 
-        participants = db.query(CollabParticipant).filter_by(session_id=session.id).all()
+        participants = (
+            db.query(CollabParticipant).filter_by(session_id=session.id).all()
+        )
 
         return {
-            "invite_code":        session.invite_code,
-            "host_user_id":       str(session.host_user_id),
-            "target_emotion":     session.target_emotion,
-            "duration_minutes":   session.duration_minutes,
-            "status":             session.status,
-            "aggregated_source":  session.aggregated_source,
-            "participant_count":  len(participants),
+            "invite_code": session.invite_code,
+            "host_user_id": str(session.host_user_id),
+            "target_emotion": session.target_emotion,
+            "duration_minutes": session.duration_minutes,
+            "status": session.status,
+            "aggregated_source": session.aggregated_source,
+            "participant_count": len(participants),
             "participants": [
                 {
-                    "user_id":        str(p.user_id),
+                    "user_id": str(p.user_id),
                     "source_emotion": p.source_emotion,
-                    "joined_at":      p.joined_at.isoformat() if p.joined_at else None,
+                    "joined_at": p.joined_at.isoformat() if p.joined_at else None,
                 }
                 for p in participants
             ],
@@ -196,7 +210,9 @@ class CollabArcService:
         from centroid → session.target_emotion using the host's track library.
         Sets session.status = 'ready' and stores arc in arc_json.
         """
-        session = db.query(CollabSession).filter_by(invite_code=invite_code.upper()).first()
+        session = (
+            db.query(CollabSession).filter_by(invite_code=invite_code.upper()).first()
+        )
         if not session:
             raise SessionNotFoundError(f"Session '{invite_code}' not found")
         if str(session.host_user_id) != str(requesting_user_id):
@@ -205,7 +221,9 @@ class CollabArcService:
             # Already generated — return cached result
             return session.arc_json
 
-        participants = db.query(CollabParticipant).filter_by(session_id=session.id).all()
+        participants = (
+            db.query(CollabParticipant).filter_by(session_id=session.id).all()
+        )
         if not participants:
             raise CollabError("No participants have joined yet")
 
@@ -228,11 +246,11 @@ class CollabArcService:
         arc_result = {
             **arc,
             "collab_meta": {
-                "invite_code":     session.invite_code,
+                "invite_code": session.invite_code,
                 "participant_count": len(participants),
                 "source_emotions": source_emotions,
                 "aggregated_source": centroid,
-                "target_emotion":  session.target_emotion,
+                "target_emotion": session.target_emotion,
             },
         }
 
@@ -268,7 +286,7 @@ class CollabArcService:
         best_emotion = "neutral"
         best_total = float("inf")
 
-        for candidate in sorted(VALID_EMOTIONS):   # sorted for determinism
+        for candidate in sorted(VALID_EMOTIONS):  # sorted for determinism
             total = 0.0
             for src in source_emotions:
                 d = dist_from[src].get(candidate, float("inf"))

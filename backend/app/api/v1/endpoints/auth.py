@@ -179,8 +179,7 @@ async def get_spotify_token(
 
     now = datetime.utcnow()
     expires_at = (
-        user.token_expires_at.replace(tzinfo=None)
-        if user.token_expires_at else now
+        user.token_expires_at.replace(tzinfo=None) if user.token_expires_at else now
     )
     needs_refresh = expires_at < now + timedelta(minutes=5)
 

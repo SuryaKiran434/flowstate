@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint src/",
+    "lint": "eslint src/ --ext .js,.jsx",
+    "typecheck": "echo 'No TypeScript — skipping typecheck'",
     "test": "vitest"
   },
   "dependencies": {

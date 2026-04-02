@@ -16,23 +16,33 @@ import httpx
 from app.core.config import get_settings
 
 VALID_EMOTIONS = [
-    "energetic", "happy", "euphoric", "peaceful", "focused",
-    "romantic", "nostalgic", "neutral", "melancholic", "sad", "tense", "angry"
+    "energetic",
+    "happy",
+    "euphoric",
+    "peaceful",
+    "focused",
+    "romantic",
+    "nostalgic",
+    "neutral",
+    "melancholic",
+    "sad",
+    "tense",
+    "angry",
 ]
 
 EMOTION_DESCRIPTIONS = {
-    "energetic":   "high energy, driving, powerful — workout or pump-up music",
-    "happy":       "upbeat, cheerful, light — feel-good vibes",
-    "euphoric":    "peak joy, exhilarating, triumphant — festival or celebration",
-    "peaceful":    "calm, serene, gentle — relaxation or winding down",
-    "focused":     "steady, purposeful, minimal distraction — study or deep work",
-    "romantic":    "warm, tender, intimate — love or longing",
-    "nostalgic":   "wistful, bittersweet, reflective — memories and the past",
-    "neutral":     "balanced, neither high nor low — background or transitional",
+    "energetic": "high energy, driving, powerful — workout or pump-up music",
+    "happy": "upbeat, cheerful, light — feel-good vibes",
+    "euphoric": "peak joy, exhilarating, triumphant — festival or celebration",
+    "peaceful": "calm, serene, gentle — relaxation or winding down",
+    "focused": "steady, purposeful, minimal distraction — study or deep work",
+    "romantic": "warm, tender, intimate — love or longing",
+    "nostalgic": "wistful, bittersweet, reflective — memories and the past",
+    "neutral": "balanced, neither high nor low — background or transitional",
     "melancholic": "quietly sad, introspective, aching — not quite crying but close",
-    "sad":         "heavy, sorrowful, low energy — grief or heartbreak",
-    "tense":       "anxious, unsettled, high-strung — stress or agitation",
-    "angry":       "frustrated, intense, raw — anger or aggression",
+    "sad": "heavy, sorrowful, low energy — grief or heartbreak",
+    "tense": "anxious, unsettled, high-strung — stress or agitation",
+    "angry": "frustrated, intense, raw — anger or aggression",
 }
 
 ADJUST_SYSTEM_PROMPT = f"""You are a mid-session music arc adjuster for Flowstate.
@@ -100,12 +110,14 @@ class MoodParser:
 
     def __init__(self):
         self.settings = get_settings()
-        self.api_url  = "https://api.anthropic.com/v1/messages"
+        self.api_url = "https://api.anthropic.com/v1/messages"
 
     async def parse(self, mood_text: str) -> dict:
         mood_text = mood_text.strip()
         if not mood_text:
-            return self._fallback("neutral", "peaceful", "No mood provided — defaulting to a calming arc")
+            return self._fallback(
+                "neutral", "peaceful", "No mood provided — defaulting to a calming arc"
+            )
 
         # Use Claude if API key is configured
         if self.settings.anthropic_api_key:
@@ -123,16 +135,16 @@ class MoodParser:
             response = await client.post(
                 self.api_url,
                 headers={
-                    "Content-Type":      "application/json",
-                    "x-api-key":         self.settings.anthropic_api_key,
+                    "Content-Type": "application/json",
+                    "x-api-key": self.settings.anthropic_api_key,
                     "anthropic-version": "2023-06-01",
                 },
                 json={
-                    "model":      "claude-haiku-4-5",
+                    "model": "claude-haiku-4-5",
                     "max_tokens": 200,
-                    "system":     SYSTEM_PROMPT,
-                    "messages":   [{"role": "user", "content": mood_text}],
-                }
+                    "system": SYSTEM_PROMPT,
+                    "messages": [{"role": "user", "content": mood_text}],
+                },
             )
             response.raise_for_status()
             data = response.json()
@@ -159,17 +171,27 @@ class MoodParser:
                 target = self._adjacent_emotion(source)
 
             return {
-                "source":         source,
-                "target":         target,
-                "interpretation": parsed.get("interpretation", f"From {source} to {target}"),
+                "source": source,
+                "target": target,
+                "interpretation": parsed.get(
+                    "interpretation", f"From {source} to {target}"
+                ),
             }
 
     def _adjacent_emotion(self, emotion: str) -> str:
         defaults = {
-            "energetic": "peaceful", "happy": "peaceful",    "euphoric":    "peaceful",
-            "peaceful":  "happy",    "focused": "peaceful",  "romantic":    "peaceful",
-            "nostalgic": "peaceful", "neutral": "happy",     "melancholic": "neutral",
-            "sad":       "neutral",  "tense":   "peaceful",  "angry":       "neutral",
+            "energetic": "peaceful",
+            "happy": "peaceful",
+            "euphoric": "peaceful",
+            "peaceful": "happy",
+            "focused": "peaceful",
+            "romantic": "peaceful",
+            "nostalgic": "peaceful",
+            "neutral": "happy",
+            "melancholic": "neutral",
+            "sad": "neutral",
+            "tense": "peaceful",
+            "angry": "neutral",
         }
         return defaults.get(emotion, "neutral")
 
@@ -177,18 +199,91 @@ class MoodParser:
         text_lower = text.lower()
 
         keyword_map = {
-            "tense":       ["stress", "anxious", "anxiety", "worried", "nervous", "overwhelm", "tense", "pressure"],
-            "sad":         ["sad", "depress", "heartbreak", "heartbroken", "grief", "crying", "cry", "devastat"],
-            "angry":       ["angry", "anger", "frustrat", "furious", "rage", "annoyed", "irritat"],
+            "tense": [
+                "stress",
+                "anxious",
+                "anxiety",
+                "worried",
+                "nervous",
+                "overwhelm",
+                "tense",
+                "pressure",
+            ],
+            "sad": [
+                "sad",
+                "depress",
+                "heartbreak",
+                "heartbroken",
+                "grief",
+                "crying",
+                "cry",
+                "devastat",
+            ],
+            "angry": [
+                "angry",
+                "anger",
+                "frustrat",
+                "furious",
+                "rage",
+                "annoyed",
+                "irritat",
+            ],
             "melancholic": ["melanchol", "lonely", "alone", "missing", "empty", "numb"],
-            "energetic":   ["energetic", "pumped", "hype", "workout", "gym", "run", "exercise", "motivated"],
-            "happy":       ["happy", "joy", "excited", "great", "wonderful", "amazing", "cheerful"],
-            "euphoric":    ["euphoric", "celebrat", "party", "ecstat", "thrilled", "elated"],
-            "peaceful":    ["peaceful", "calm", "relax", "unwind", "chill", "serene", "quiet", "sleep"],
-            "focused":     ["focus", "concentrate", "study", "work", "productive", "deep work"],
-            "romantic":    ["romantic", "love", "date", "intimate", "tender", "longing"],
-            "nostalgic":   ["nostalgic", "memories", "remember", "past", "childhood", "throwback"],
-            "neutral":     ["neutral", "okay", "fine", "normal", "whatever", "meh"],
+            "energetic": [
+                "energetic",
+                "pumped",
+                "hype",
+                "workout",
+                "gym",
+                "run",
+                "exercise",
+                "motivated",
+            ],
+            "happy": [
+                "happy",
+                "joy",
+                "excited",
+                "great",
+                "wonderful",
+                "amazing",
+                "cheerful",
+            ],
+            "euphoric": [
+                "euphoric",
+                "celebrat",
+                "party",
+                "ecstat",
+                "thrilled",
+                "elated",
+            ],
+            "peaceful": [
+                "peaceful",
+                "calm",
+                "relax",
+                "unwind",
+                "chill",
+                "serene",
+                "quiet",
+                "sleep",
+            ],
+            "focused": [
+                "focus",
+                "concentrate",
+                "study",
+                "work",
+                "productive",
+                "deep work",
+            ],
+            "romantic": ["romantic", "love", "date", "intimate", "tender", "longing"],
+            "nostalgic": [
+                "nostalgic",
+                "memories",
+                "remember",
+                "past",
+                "childhood",
+                "throwback",
+            ],
+            "neutral": ["neutral", "okay", "fine", "normal", "whatever", "meh"],
         }
 
         detected = []
@@ -200,7 +295,11 @@ class MoodParser:
 
         if len(detected) >= 2:
             source = detected[0]
-            target = detected[1] if detected[1] != detected[0] else self._adjacent_emotion(detected[0])
+            target = (
+                detected[1]
+                if detected[1] != detected[0]
+                else self._adjacent_emotion(detected[0])
+            )
         elif len(detected) == 1:
             source = detected[0]
             target = "peaceful" if source in negative else "energetic"
@@ -224,10 +323,10 @@ class MoodParser:
         command = command.strip()
         if not command:
             return {
-                "new_target":     current_target,
+                "new_target": current_target,
                 "interpretation": "Continuing toward the original destination",
-                "action":         "change_target",
-                "method":         "passthrough",
+                "action": "change_target",
+                "method": "passthrough",
             }
 
         context = (
@@ -253,16 +352,16 @@ class MoodParser:
             response = await client.post(
                 self.api_url,
                 headers={
-                    "Content-Type":      "application/json",
-                    "x-api-key":         self.settings.anthropic_api_key,
+                    "Content-Type": "application/json",
+                    "x-api-key": self.settings.anthropic_api_key,
                     "anthropic-version": "2023-06-01",
                 },
                 json={
-                    "model":      "claude-haiku-4-5",
+                    "model": "claude-haiku-4-5",
                     "max_tokens": 150,
-                    "system":     ADJUST_SYSTEM_PROMPT,
-                    "messages":   [{"role": "user", "content": context}],
-                }
+                    "system": ADJUST_SYSTEM_PROMPT,
+                    "messages": [{"role": "user", "content": context}],
+                },
             )
             response.raise_for_status()
             data = response.json()
@@ -274,16 +373,18 @@ class MoodParser:
                     raw = raw[4:]
             raw = raw.strip()
 
-            parsed      = json.loads(raw)
-            new_target  = parsed.get("new_target", "").lower()
+            parsed = json.loads(raw)
+            new_target = parsed.get("new_target", "").lower()
 
             if new_target not in VALID_EMOTIONS:
                 raise ValueError(f"Invalid new_target from Claude: {new_target}")
 
             return {
-                "new_target":     new_target,
-                "interpretation": parsed.get("interpretation", f"Adjusting arc toward {new_target}"),
-                "action":         parsed.get("action", "change_target"),
+                "new_target": new_target,
+                "interpretation": parsed.get(
+                    "interpretation", f"Adjusting arc toward {new_target}"
+                ),
+                "action": parsed.get("action", "change_target"),
             }
 
     def _fallback_adjustment(self, command: str, current_target: str) -> dict:
@@ -291,22 +392,68 @@ class MoodParser:
         text = command.lower()
 
         # Energy shift signals
-        calm_words   = ["slow", "calm", "quiet", "relax", "chill", "peaceful", "softer", "gentle", "wind down"]
-        energy_words = ["energy", "faster", "pump", "hype", "intense", "louder", "powerful", "workout", "speed"]
-        sad_words    = ["sad", "cry", "depress", "heavy", "dark", "melanchol", "lonely", "heartbreak"]
-        happy_words  = ["happy", "upbeat", "cheerful", "better", "positive", "joy", "bright"]
-        nostalgic    = ["nostalgic", "memories", "throwback", "remember", "past"]
-        romantic     = ["romantic", "love", "tender", "intimate", "warm"]
-        focused      = ["focus", "study", "work", "concentrate", "productive"]
+        calm_words = [
+            "slow",
+            "calm",
+            "quiet",
+            "relax",
+            "chill",
+            "peaceful",
+            "softer",
+            "gentle",
+            "wind down",
+        ]
+        energy_words = [
+            "energy",
+            "faster",
+            "pump",
+            "hype",
+            "intense",
+            "louder",
+            "powerful",
+            "workout",
+            "speed",
+        ]
+        sad_words = [
+            "sad",
+            "cry",
+            "depress",
+            "heavy",
+            "dark",
+            "melanchol",
+            "lonely",
+            "heartbreak",
+        ]
+        happy_words = [
+            "happy",
+            "upbeat",
+            "cheerful",
+            "better",
+            "positive",
+            "joy",
+            "bright",
+        ]
+        nostalgic = ["nostalgic", "memories", "throwback", "remember", "past"]
+        romantic = ["romantic", "love", "tender", "intimate", "warm"]
+        focused = ["focus", "study", "work", "concentrate", "productive"]
 
         if any(w in text for w in sad_words):
-            new_target, interp = "sad", "Shifting toward a heavier, more emotional space"
+            new_target, interp = (
+                "sad",
+                "Shifting toward a heavier, more emotional space",
+            )
         elif any(w in text for w in calm_words):
-            new_target, interp = "peaceful", "Bringing the arc to a calmer, more serene place"
+            new_target, interp = (
+                "peaceful",
+                "Bringing the arc to a calmer, more serene place",
+            )
         elif any(w in text for w in energy_words):
             new_target, interp = "energetic", "Pushing toward higher energy"
         elif any(w in text for w in happy_words):
-            new_target, interp = "happy", "Brightening the arc toward a more uplifting destination"
+            new_target, interp = (
+                "happy",
+                "Brightening the arc toward a more uplifting destination",
+            )
         elif any(w in text for w in nostalgic):
             new_target, interp = "nostalgic", "Steering toward bittersweet nostalgia"
         elif any(w in text for w in romantic):
@@ -314,19 +461,22 @@ class MoodParser:
         elif any(w in text for w in focused):
             new_target, interp = "focused", "Moving toward a steady, purposeful space"
         else:
-            new_target, interp = current_target, "Continuing toward the original destination"
+            new_target, interp = (
+                current_target,
+                "Continuing toward the original destination",
+            )
 
         return {
-            "new_target":     new_target,
+            "new_target": new_target,
             "interpretation": interp,
-            "action":         "change_target",
-            "method":         "fallback",
+            "action": "change_target",
+            "method": "fallback",
         }
 
     def _fallback(self, source: str, target: str, interpretation: str) -> dict:
         return {
-            "source":         source,
-            "target":         target,
+            "source": source,
+            "target": target,
             "interpretation": interpretation,
-            "method":         "fallback",
+            "method": "fallback",
         }

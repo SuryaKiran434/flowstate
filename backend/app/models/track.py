@@ -21,14 +21,14 @@ from app.db.session import Base
 class Track(Base):
     __tablename__ = "tracks"
 
-    id            = Column(String(50), primary_key=True)   # Spotify track ID
-    name          = Column(String(500), nullable=False)
-    artist_names  = Column(String(500), nullable=True)
-    album_name    = Column(String(500), nullable=True)
-    duration_ms   = Column(Integer, nullable=True)
-    preview_url   = Column(Text, nullable=True)            # Stored but not relied upon
-    popularity    = Column(Integer, nullable=True)
-    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    id = Column(String(50), primary_key=True)  # Spotify track ID
+    name = Column(String(500), nullable=False)
+    artist_names = Column(String(500), nullable=True)
+    album_name = Column(String(500), nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    preview_url = Column(Text, nullable=True)  # Stored but not relied upon
+    popularity = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class TrackFeature(Base):
@@ -48,22 +48,25 @@ class TrackFeature(Base):
     absent — those endpoints are blocked in Development Mode and deprecated for
     new apps. This pipeline computes equivalent or richer features independently.
     """
+
     __tablename__ = "track_features"
 
-    id                 = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    track_id           = Column(String(50), ForeignKey("tracks.id"), nullable=False, unique=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    track_id = Column(
+        String(50), ForeignKey("tracks.id"), nullable=False, unique=True, index=True
+    )
 
     # ── librosa features (yt-dlp audio source) ────────────────────
-    mfcc_mean          = Column(JSONB, nullable=True)   # list[float] len=13
-    mfcc_std           = Column(JSONB, nullable=True)   # list[float] len=13
-    chroma_mean        = Column(JSONB, nullable=True)   # list[float] len=12
-    spectral_centroid  = Column(Float, nullable=True)   # Hz
-    zero_crossing_rate = Column(Float, nullable=True)   # 0.0 – 1.0
-    rms_energy         = Column(Float, nullable=True)   # RMS amplitude
-    tempo_librosa      = Column(Float, nullable=True)   # BPM
+    mfcc_mean = Column(JSONB, nullable=True)  # list[float] len=13
+    mfcc_std = Column(JSONB, nullable=True)  # list[float] len=13
+    chroma_mean = Column(JSONB, nullable=True)  # list[float] len=12
+    spectral_centroid = Column(Float, nullable=True)  # Hz
+    zero_crossing_rate = Column(Float, nullable=True)  # 0.0 – 1.0
+    rms_energy = Column(Float, nullable=True)  # RMS amplitude
+    tempo_librosa = Column(Float, nullable=True)  # BPM
 
-    created_at  = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at  = Column(
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
@@ -72,10 +75,13 @@ class TrackFeature(Base):
 
 class UserTrack(Base):
     """Junction table: which users have which tracks in their seeded library."""
+
     __tablename__ = "user_tracks"
 
-    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    track_id   = Column(String(50), ForeignKey("tracks.id"), nullable=False, index=True)
-    saved_at   = Column(DateTime(timezone=True), nullable=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    track_id = Column(String(50), ForeignKey("tracks.id"), nullable=False, index=True)
+    saved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

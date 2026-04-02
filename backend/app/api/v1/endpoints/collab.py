@@ -27,8 +27,11 @@ _svc = CollabArcService()
 
 # ─── Request models ───────────────────────────────────────────────────────────
 
+
 class CreateSessionRequest(BaseModel):
-    target_emotion:   str = Field(..., description="Desired emotional destination for the group")
+    target_emotion: str = Field(
+        ..., description="Desired emotional destination for the group"
+    )
     duration_minutes: int = Field(default=30, ge=5, le=120)
 
 
@@ -37,6 +40,7 @@ class JoinSessionRequest(BaseModel):
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
+
 
 @router.post("/sessions", status_code=201)
 def create_session(
@@ -60,11 +64,11 @@ def create_session(
         raise HTTPException(status_code=400, detail=str(exc))
 
     return {
-        "invite_code":      session.invite_code,
-        "host_user_id":     str(session.host_user_id),
-        "target_emotion":   session.target_emotion,
+        "invite_code": session.invite_code,
+        "host_user_id": str(session.host_user_id),
+        "target_emotion": session.target_emotion,
         "duration_minutes": session.duration_minutes,
-        "status":           session.status,
+        "status": session.status,
     }
 
 
@@ -95,10 +99,10 @@ def join_session(
         raise HTTPException(status_code=400, detail=str(exc))
 
     return {
-        "invite_code":    session.invite_code,
+        "invite_code": session.invite_code,
         "target_emotion": session.target_emotion,
-        "status":         session.status,
-        "joined":         True,
+        "status": session.status,
+        "joined": True,
     }
 
 
@@ -141,9 +145,12 @@ def generate_collab_arc(
         raise HTTPException(status_code=400, detail=str(exc))
 
     if arc.get("error") == "library_not_ready":
-        raise HTTPException(status_code=202, detail={
-            "error":   "library_not_ready",
-            "message": arc["message"],
-        })
+        raise HTTPException(
+            status_code=202,
+            detail={
+                "error": "library_not_ready",
+                "message": arc["message"],
+            },
+        )
 
     return arc

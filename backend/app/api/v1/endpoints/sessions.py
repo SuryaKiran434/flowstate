@@ -25,19 +25,20 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 # ─── Request / Response schemas ───────────────────────────────────────────────
 
+
 class TrackIn(BaseModel):
-    track_id:      str
-    position:      int
+    track_id: str
+    position: int
     emotion_label: Optional[str] = None
-    arc_segment:   Optional[int] = None
+    arc_segment: Optional[int] = None
 
 
 class CreateSessionRequest(BaseModel):
     source_emotion: str
     target_emotion: str
-    duration_mins:  int = Field(..., gt=0)
-    arc_path:       list[str]
-    tracks:         list[TrackIn]
+    duration_mins: int = Field(..., gt=0)
+    arc_path: list[str]
+    tracks: list[TrackIn]
 
 
 class PatchSessionRequest(BaseModel):
@@ -45,31 +46,38 @@ class PatchSessionRequest(BaseModel):
 
 
 class TrackEventRequest(BaseModel):
-    position: int                        # flat track index within session
-    event:    str = Field(..., pattern=r"^(play|skip|complete)$")
+    position: int  # flat track index within session
+    event: str = Field(..., pattern=r"^(play|skip|complete)$")
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 _VALID_TRANSITIONS = {
-    "generated":  {"active"},
-    "active":     {"completed", "abandoned"},
-    "completed":  set(),
-    "abandoned":  set(),
+    "generated": {"active"},
+    "active": {"completed", "abandoned"},
+    "completed": set(),
+    "abandoned": set(),
 }
 
 
 def _get_session_or_404(session_id: UUID, user_id: str, db: DbSession) -> Session:
-    s = db.query(Session).filter(
-        Session.id == session_id,
-        Session.user_id == user_id,
-    ).first()
+    s = (
+        db.query(Session)
+        .filter(
+            Session.id == session_id,
+            Session.user_id == user_id,
+        )
+        .first()
+    )
     if not s:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
     return s
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
+
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_session(
@@ -94,13 +102,15 @@ async def create_session(
     db.flush()  # populate session.id before inserting tracks
 
     for t in body.tracks:
-        db.add(SessionTrack(
-            session_id=session.id,
-            track_id=t.track_id,
-            position=t.position,
-            emotion_label=t.emotion_label,
-            arc_segment=t.arc_segment,
-        ))
+        db.add(
+            SessionTrack(
+                session_id=session.id,
+                track_id=t.track_id,
+                position=t.position,
+                emotion_label=t.emotion_label,
+                arc_segment=t.arc_segment,
+            )
+        )
 
     db.commit()
     return {"session_id": str(session.id)}
@@ -150,10 +160,14 @@ async def record_track_event(
     """
     _get_session_or_404(session_id, user_id, db)  # ownership check
 
-    track = db.query(SessionTrack).filter(
-        SessionTrack.session_id == session_id,
-        SessionTrack.position == body.position,
-    ).first()
+    track = (
+        db.query(SessionTrack)
+        .filter(
+            SessionTrack.session_id == session_id,
+            SessionTrack.position == body.position,
+        )
+        .first()
+    )
 
     if not track:
         raise HTTPException(

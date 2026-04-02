@@ -39,20 +39,33 @@ log = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-EMOTIONS = sorted([
-    "angry", "energetic", "euphoric", "focused", "happy",
-    "melancholic", "neutral", "nostalgic", "peaceful", "romantic", "sad", "tense",
-])
+EMOTIONS = sorted(
+    [
+        "angry",
+        "energetic",
+        "euphoric",
+        "focused",
+        "happy",
+        "melancholic",
+        "neutral",
+        "nostalgic",
+        "peaceful",
+        "romantic",
+        "sad",
+        "tense",
+    ]
+)
 FEATURE_DIMS = 42  # mfcc_mean(13) + mfcc_std(13) + chroma_mean(12) + 4 scalars
 
 _MODELS_DIR = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "models")
 )
 _DEFAULT_MODEL_PATH = os.path.join(_MODELS_DIR, "emotion_classifier.joblib")
-_DEFAULT_META_PATH  = os.path.join(_MODELS_DIR, "emotion_classifier_meta.json")
+_DEFAULT_META_PATH = os.path.join(_MODELS_DIR, "emotion_classifier_meta.json")
 
 
 # ── Classifier ────────────────────────────────────────────────────────────────
+
 
 class EmotionClassifier:
     """
@@ -84,14 +97,14 @@ class EmotionClassifier:
 
         Missing / None values default to 0.0 so the vector is always 42-dim.
         """
-        mfcc_mean   = row.get("mfcc_mean")   or [0.0] * 13
-        mfcc_std    = row.get("mfcc_std")    or [0.0] * 13
+        mfcc_mean = row.get("mfcc_mean") or [0.0] * 13
+        mfcc_std = row.get("mfcc_std") or [0.0] * 13
         chroma_mean = row.get("chroma_mean") or [0.0] * 12
         scalars = [
-            row.get("spectral_centroid")  or 0.0,
+            row.get("spectral_centroid") or 0.0,
             row.get("zero_crossing_rate") or 0.0,
-            row.get("rms_energy")         or 0.0,
-            row.get("tempo_librosa")      or 0.0,
+            row.get("rms_energy") or 0.0,
+            row.get("tempo_librosa") or 0.0,
         ]
         vec = list(mfcc_mean) + list(mfcc_std) + list(chroma_mean) + scalars
         return np.array(vec, dtype=np.float32)
@@ -115,7 +128,8 @@ class EmotionClassifier:
             (X: np.ndarray shape [n, 42], y: list[str])
             Both are empty when the DB has no qualifying rows.
         """
-        rows = db.execute(text("""
+        rows = db.execute(
+            text("""
             SELECT
                 mfcc_mean, mfcc_std, chroma_mean,
                 spectral_centroid, zero_crossing_rate, rms_energy, tempo_librosa,
@@ -124,7 +138,9 @@ class EmotionClassifier:
             WHERE emotion_label      IS NOT NULL
               AND emotion_confidence >= :min_conf
               AND mfcc_mean          IS NOT NULL
-        """), {"min_conf": min_confidence}).fetchall()
+        """),
+            {"min_conf": min_confidence},
+        ).fetchall()
 
         if not rows:
             return np.empty((0, FEATURE_DIMS), dtype=np.float32), []
@@ -160,17 +176,22 @@ class EmotionClassifier:
         Returns:
             dict with keys: macro_f1, macro_f1_std, cv_scores, per_class_f1, n_samples
         """
-        pipeline = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf",    RandomForestClassifier(
-                n_estimators=n_estimators,
-                class_weight="balanced",
-                random_state=42,
-                n_jobs=-1,
-            )),
-        ])
+        pipeline = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                (
+                    "clf",
+                    RandomForestClassifier(
+                        n_estimators=n_estimators,
+                        class_weight="balanced",
+                        random_state=42,
+                        n_jobs=-1,
+                    ),
+                ),
+            ]
+        )
 
-        skf       = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
+        skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
         cv_scores = cross_val_score(pipeline, X, y, cv=skf, scoring="f1_macro")
 
         # Final fit on all data
@@ -187,11 +208,11 @@ class EmotionClassifier:
         }
 
         return {
-            "macro_f1":     float(cv_scores.mean()),
+            "macro_f1": float(cv_scores.mean()),
             "macro_f1_std": float(cv_scores.std()),
-            "cv_scores":    cv_scores.tolist(),
+            "cv_scores": cv_scores.tolist(),
             "per_class_f1": per_class,
-            "n_samples":    len(y),
+            "n_samples": len(y),
         }
 
     # ── Inference ─────────────────────────────────────────────────────────────
@@ -209,7 +230,7 @@ class EmotionClassifier:
         if self.model is None:
             raise RuntimeError("Model not loaded — call train() or load() first")
         proba = self.model.predict_proba(features.reshape(1, -1))[0]
-        idx   = int(proba.argmax())
+        idx = int(proba.argmax())
         return self.model.classes_[idx], round(float(proba[idx]), 4)
 
     def predict_batch(self, X: np.ndarray) -> list:
@@ -224,7 +245,7 @@ class EmotionClassifier:
         """
         if self.model is None:
             raise RuntimeError("Model not loaded — call train() or load() first")
-        probas  = self.model.predict_proba(X)
+        probas = self.model.predict_proba(X)
         indices = probas.argmax(axis=1)
         return [
             (self.model.classes_[i], round(float(probas[r, i]), 4))
@@ -285,14 +306,16 @@ class EmotionClassifier:
         """
         try:
             import mlflow
-            tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5001")
+
+            tracking_uri = os.environ.get(
+                "MLFLOW_TRACKING_URI", "http://localhost:5001"
+            )
             mlflow.set_tracking_uri(tracking_uri)
             mlflow.set_experiment("emotion_classifier")
             with mlflow.start_run():
                 # Only log scalar values as metrics
                 scalar_metrics = {
-                    k: v for k, v in metrics.items()
-                    if isinstance(v, (int, float))
+                    k: v for k, v in metrics.items() if isinstance(v, (int, float))
                 }
                 mlflow.log_metrics(scalar_metrics)
                 mlflow.log_params(params)

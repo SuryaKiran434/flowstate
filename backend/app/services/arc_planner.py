@@ -24,39 +24,56 @@ import numpy as np
 # ─── Emotion Graph ────────────────────────────────────────────────────────────
 
 EMOTION_GRAPH: dict[str, dict[str, float]] = {
-    "energetic":   {"happy": 1.0, "euphoric": 1.2, "focused": 2.0, "tense": 2.5},
-    "happy":       {"energetic": 1.0, "euphoric": 1.2, "romantic": 1.5, "neutral": 2.0},
-    "euphoric":    {"happy": 1.2, "energetic": 1.2, "romantic": 2.0},
-    "peaceful":    {"neutral": 1.0, "nostalgic": 1.5, "focused": 1.5, "romantic": 2.0},
-    "focused":     {"neutral": 1.0, "peaceful": 1.5, "energetic": 2.0, "melancholic": 2.5},
-    "romantic":    {"happy": 1.5, "nostalgic": 1.5, "peaceful": 2.0, "melancholic": 2.5},
-    "nostalgic":   {"melancholic": 1.5, "romantic": 1.5, "peaceful": 2.0, "neutral": 2.0},
-    "neutral":     {"peaceful": 1.0, "focused": 1.0, "nostalgic": 2.0, "happy": 2.0},
+    "energetic": {"happy": 1.0, "euphoric": 1.2, "focused": 2.0, "tense": 2.5},
+    "happy": {"energetic": 1.0, "euphoric": 1.2, "romantic": 1.5, "neutral": 2.0},
+    "euphoric": {"happy": 1.2, "energetic": 1.2, "romantic": 2.0},
+    "peaceful": {"neutral": 1.0, "nostalgic": 1.5, "focused": 1.5, "romantic": 2.0},
+    "focused": {"neutral": 1.0, "peaceful": 1.5, "energetic": 2.0, "melancholic": 2.5},
+    "romantic": {"happy": 1.5, "nostalgic": 1.5, "peaceful": 2.0, "melancholic": 2.5},
+    "nostalgic": {"melancholic": 1.5, "romantic": 1.5, "peaceful": 2.0, "neutral": 2.0},
+    "neutral": {"peaceful": 1.0, "focused": 1.0, "nostalgic": 2.0, "happy": 2.0},
     "melancholic": {"sad": 1.5, "nostalgic": 1.5, "neutral": 2.5, "focused": 3.0},
-    "sad":         {"melancholic": 1.5, "neutral": 3.0, "nostalgic": 2.5},
-    "tense":       {"energetic": 2.5, "neutral": 2.0, "focused": 1.5, "angry": 1.5},
-    "angry":       {"tense": 1.5, "energetic": 2.5, "neutral": 3.5},
+    "sad": {"melancholic": 1.5, "neutral": 3.0, "nostalgic": 2.5},
+    "tense": {"energetic": 2.5, "neutral": 2.0, "focused": 1.5, "angry": 1.5},
+    "angry": {"tense": 1.5, "energetic": 2.5, "neutral": 3.5},
 }
 
 TRACKS_PER_MINUTE: dict[str, float] = {
-    "energetic": 0.25, "happy": 0.27, "euphoric": 0.25,
-    "peaceful": 0.20,  "focused": 0.22, "romantic": 0.20,
-    "nostalgic": 0.22, "neutral": 0.25, "melancholic": 0.20,
-    "sad": 0.18,       "tense": 0.28,  "angry": 0.30,
+    "energetic": 0.25,
+    "happy": 0.27,
+    "euphoric": 0.25,
+    "peaceful": 0.20,
+    "focused": 0.22,
+    "romantic": 0.20,
+    "nostalgic": 0.22,
+    "neutral": 0.25,
+    "melancholic": 0.20,
+    "sad": 0.18,
+    "tense": 0.28,
+    "angry": 0.30,
 }
 
 # Approximate energy center per emotion — used for transition direction logic
 ENERGY_CENTERS: dict[str, float] = {
-    "energetic": 0.85, "euphoric": 0.85, "angry": 0.85, "tense": 0.75,
-    "happy": 0.65,     "focused": 0.50,  "neutral": 0.45, "romantic": 0.40,
-    "nostalgic": 0.38, "peaceful": 0.25, "melancholic": 0.25, "sad": 0.20,
+    "energetic": 0.85,
+    "euphoric": 0.85,
+    "angry": 0.85,
+    "tense": 0.75,
+    "happy": 0.65,
+    "focused": 0.50,
+    "neutral": 0.45,
+    "romantic": 0.40,
+    "nostalgic": 0.38,
+    "peaceful": 0.25,
+    "melancholic": 0.25,
+    "sad": 0.20,
 }
 
 
 @dataclass
 class TrackCandidate:
-    track_id: str          # UUID string from track_features.track_id
-    spotify_id: str        # Spotify track ID
+    track_id: str  # UUID string from track_features.track_id
+    spotify_id: str  # Spotify track ID
     title: str
     artist: str
     duration_ms: int
@@ -65,7 +82,7 @@ class TrackCandidate:
     energy: float
     valence: float
     tempo: float
-    language: str = "en"   # BCP-47-style code inferred from Unicode script
+    language: str = "en"  # BCP-47-style code inferred from Unicode script
 
 
 @dataclass(order=True)
@@ -112,7 +129,8 @@ class ArcPlanner:
         from sqlalchemy import text
         from app.services.language_detector import detect as detect_language
 
-        rows = db.execute(text("""
+        rows = db.execute(
+            text("""
             SELECT
                 tf.track_id,
                 t.id        AS spotify_id,
@@ -130,7 +148,9 @@ class ArcPlanner:
               AND t.name IS NOT NULL
               AND t.duration_ms > 0
             ORDER BY RANDOM()
-        """), {"uid": user_id}).fetchall()
+        """),
+            {"uid": user_id},
+        ).fetchall()
 
         excluded = excluded_spotify_ids or set()
         candidates = [
@@ -156,7 +176,10 @@ class ArcPlanner:
         seen_titles: dict[str, TrackCandidate] = {}
         for t in candidates:
             key = t.title.lower().strip() if t.title else t.spotify_id
-            if key not in seen_titles or t.emotion_confidence > seen_titles[key].emotion_confidence:
+            if (
+                key not in seen_titles
+                or t.emotion_confidence > seen_titles[key].emotion_confidence
+            ):
                 seen_titles[key] = t
         return list(seen_titles.values())
 
@@ -197,7 +220,9 @@ class ArcPlanner:
                 "total_tracks": 0,
             }
 
-        return self.plan(source, target, duration_minutes, track_pool, fixed_arc_path=fixed_arc_path)
+        return self.plan(
+            source, target, duration_minutes, track_pool, fixed_arc_path=fixed_arc_path
+        )
 
     def resolve_replan_source(self, skipped_emotion: str, target: str) -> str:
         """
@@ -210,10 +235,7 @@ class ArcPlanner:
             return skipped_emotion  # no neighbors — stay put
 
         # Pick the neighbor with the shortest path to target
-        best = min(
-            neighbors,
-            key=lambda n: len(self.find_emotional_path(n, target))
-        )
+        best = min(neighbors, key=lambda n: len(self.find_emotional_path(n, target)))
         return best
 
     # ── Core planning ─────────────────────────────────────────────────────────
@@ -244,11 +266,10 @@ class ArcPlanner:
             for neighbor, edge_weight in self.graph.get(current_node, {}).items():
                 new_cost = current_cost + edge_weight
                 if neighbor not in visited or visited[neighbor] > new_cost:
-                    heapq.heappush(pq, _PQEntry(
-                        cost=new_cost,
-                        node=neighbor,
-                        path=path + [neighbor]
-                    ))
+                    heapq.heappush(
+                        pq,
+                        _PQEntry(cost=new_cost, node=neighbor, path=path + [neighbor]),
+                    )
 
         return [source, target]
 
@@ -261,12 +282,12 @@ class ArcPlanner:
         if n == 1:
             return [max(5, int(duration_minutes * TRACKS_PER_MINUTE[path[0]]))]
 
-        avg_rate    = np.mean([TRACKS_PER_MINUTE[e] for e in path])
-        total       = max(n * 3, int(duration_minutes * avg_rate))
-        base        = total // n
-        remainder   = total % n
-        allocation  = [base] * n
-        allocation[0]  += max(1, remainder // 2)
+        avg_rate = np.mean([TRACKS_PER_MINUTE[e] for e in path])
+        total = max(n * 3, int(duration_minutes * avg_rate))
+        base = total // n
+        remainder = total % n
+        allocation = [base] * n
+        allocation[0] += max(1, remainder // 2)
         allocation[-1] += remainder - remainder // 2
         return [max(2, a) for a in allocation]
 
@@ -277,7 +298,7 @@ class ArcPlanner:
                 directions.append("neutral")
             else:
                 curr = ENERGY_CENTERS.get(emotion, 0.5)
-                nxt  = ENERGY_CENTERS.get(path[i + 1], 0.5)
+                nxt = ENERGY_CENTERS.get(path[i + 1], 0.5)
                 if nxt > curr + 0.1:
                     directions.append("ascending")
                 elif nxt < curr - 0.1:
@@ -297,7 +318,8 @@ class ArcPlanner:
         used_track_ids = used_track_ids or set()
 
         candidates = [
-            t for t in track_pool
+            t
+            for t in track_pool
             if t.emotion_label == emotion and t.track_id not in used_track_ids
         ]
         random.shuffle(candidates)
@@ -306,9 +328,10 @@ class ArcPlanner:
         if len(candidates) < n_tracks:
             adjacent = set(self.graph.get(emotion, {}).keys())
             fallback = [
-                t for t in track_pool
+                t
+                for t in track_pool
                 if t.emotion_label in adjacent
-                and t.emotion_confidence < 0.65   # borderline = good bridge
+                and t.emotion_confidence < 0.65  # borderline = good bridge
                 and t.track_id not in used_track_ids
                 and t not in candidates
             ]
@@ -318,9 +341,14 @@ class ArcPlanner:
         if energy_direction == "ascending":
             candidates.sort(key=lambda t: t.energy + random.uniform(-0.08, 0.08))
         elif energy_direction == "descending":
-            candidates.sort(key=lambda t: t.energy + random.uniform(-0.08, 0.08), reverse=True)
+            candidates.sort(
+                key=lambda t: t.energy + random.uniform(-0.08, 0.08), reverse=True
+            )
         else:
-            candidates.sort(key=lambda t: t.emotion_confidence + random.uniform(-0.08, 0.08), reverse=True)
+            candidates.sort(
+                key=lambda t: t.emotion_confidence + random.uniform(-0.08, 0.08),
+                reverse=True,
+            )
 
         return candidates[:n_tracks]
 
@@ -349,12 +377,12 @@ class ArcPlanner:
                 }
             }
         """
-        arc_path   = fixed_arc_path or self.find_emotional_path(source, target)
+        arc_path = fixed_arc_path or self.find_emotional_path(source, target)
         allocation = self._allocate_tracks_per_segment(arc_path, duration_minutes)
         directions = self._compute_energy_directions(arc_path)
 
-        segments   = []
-        used_ids:  set[str] = set()  # track_id UUIDs
+        segments = []
+        used_ids: set[str] = set()  # track_id UUIDs
         used_spotify_ids: set[str] = set()  # spotify_ids — second dedup layer
         flat_tracks: list[TrackCandidate] = []
 
@@ -374,13 +402,15 @@ class ArcPlanner:
                 used_ids.add(t.track_id)
                 used_spotify_ids.add(t.spotify_id)
 
-            segments.append({
-                "emotion":          emotion,
-                "segment_index":    i,
-                "tracks":           selected,
-                "energy_direction": direction,
-                "track_count":      len(selected),
-            })
+            segments.append(
+                {
+                    "emotion": emotion,
+                    "segment_index": i,
+                    "tracks": selected,
+                    "energy_direction": direction,
+                    "track_count": len(selected),
+                }
+            )
             flat_tracks.extend(selected)
 
         # Diagnostic: which emotions in the path had no tracks?
@@ -392,14 +422,14 @@ class ArcPlanner:
         total_duration_ms = sum(t.duration_ms for t in flat_tracks)
 
         return {
-            "arc_path":          arc_path,
-            "segments":          segments,
-            "tracks":            flat_tracks,
-            "total_tracks":      len(flat_tracks),
+            "arc_path": arc_path,
+            "segments": segments,
+            "tracks": flat_tracks,
+            "total_tracks": len(flat_tracks),
             "total_duration_ms": total_duration_ms,
             "readiness": {
-                "pool_size":        len(track_pool),
+                "pool_size": len(track_pool),
                 "missing_emotions": missing,
-                "has_gaps":         len(missing) > 0,
+                "has_gaps": len(missing) > 0,
             },
         }
