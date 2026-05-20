@@ -195,6 +195,31 @@ class TestAllocateTracksPerSegment:
         assert len(alloc) == 5
         assert all(a >= 2 for a in alloc)
 
+    def test_allocation_is_rate_proportional_not_position_biased(self):
+        """Regression: previous logic dumped the remainder on allocation[0]
+        regardless of which emotion lived there. With rate-proportional
+        allocation, segment size should track TRACKS_PER_MINUTE, not position."""
+        # peaceful (0.20) vs angry (0.30) — angry should get more tracks
+        # regardless of whether it's at index 0 or index 1.
+        first_path = ["angry", "peaceful"]
+        second_path = ["peaceful", "angry"]
+        a1 = self.planner._allocate_tracks_per_segment(first_path, 30)
+        a2 = self.planner._allocate_tracks_per_segment(second_path, 30)
+        # angry's allocation must be >= peaceful's in both orderings
+        assert a1[0] >= a1[1], f"angry@0 underweighted: {a1}"
+        assert a2[1] >= a2[0], f"angry@1 underweighted: {a2}"
+
+    def test_no_extras_when_total_divides_evenly(self):
+        """Regression: with equal rates and divisible totals, every segment
+        must get the same count — no `+1` to the opening segment."""
+        # Three emotions with identical TRACKS_PER_MINUTE (energetic, neutral,
+        # euphoric all = 0.25). On durations that produce a multiple-of-3
+        # total, allocation must be flat.
+        path = ["energetic", "neutral", "euphoric"]
+        # 12 min * 0.25 = 3.0 ; total = max(9, 3) = 9 ; 9/3 = 3 with rem=0
+        alloc = self.planner._allocate_tracks_per_segment(path, 12)
+        assert alloc == [3, 3, 3], f"expected even split, got {alloc}"
+
 
 # ─── _compute_energy_directions ───────────────────────────────────────────────
 
@@ -282,14 +307,25 @@ class TestSelectTracksForSegment:
         selected = self.planner._select_tracks_for_segment("peaceful", pool, 5)
         assert len(selected) > 1  # fallback was triggered
 
-    def test_fallback_only_uses_low_confidence_adjacent(self, make_track):
-        # High-confidence adjacent tracks must NOT be borrowed
+    def test_fallback_prefers_high_confidence_adjacent(self, make_track):
+        # When the segment is short on candidates we want CONFIDENT neighbours,
+        # not borderline ones. Low-confidence labels are model noise, not bridges.
         pool = [make_track(emotion_label="peaceful")] + [
             make_track(emotion_label="neutral", emotion_confidence=0.90)
             for _ in range(10)
         ]
         selected = self.planner._select_tracks_for_segment("peaceful", pool, 5)
-        # Only the 1 "peaceful" track should be selected (high-confidence neutral not borrowed)
+        # Should fill up to 5: 1 peaceful + 4 high-confidence neutral borrows.
+        assert len(selected) == 5
+
+    def test_fallback_skips_low_confidence_adjacent(self, make_track):
+        # Below the ADJACENT_BORROW_MIN_CONFIDENCE floor, neighbours stay out.
+        pool = [make_track(emotion_label="peaceful")] + [
+            make_track(emotion_label="neutral", emotion_confidence=0.30)
+            for _ in range(10)
+        ]
+        selected = self.planner._select_tracks_for_segment("peaceful", pool, 5)
+        # Only the 1 peaceful track — low-confidence neutrals must not be borrowed.
         assert len(selected) == 1
 
     def test_empty_pool_returns_empty_list(self):
@@ -511,3 +547,17 @@ class TestPlanFromDb:
         result = self.planner.plan_from_db("tense", "peaceful", 30, db, "u")
         # After filtering, pool is empty → library_not_ready
         assert result["error"] == "library_not_ready"
+
+    def test_load_track_pool_passes_confidence_floor_to_sql(self):
+        """The SQL filter must bind MIN_INFERENCE_CONFIDENCE so low-confidence
+        classifier predictions don't enter the arc track pool."""
+        from app.services.arc_planner import MIN_INFERENCE_CONFIDENCE
+
+        db = self._mock_db([])
+        self.planner.load_track_pool_from_db(db, "user-123")
+
+        # First positional/keyword call to db.execute(text(...), params)
+        args, _kwargs = db.execute.call_args
+        params = args[1]
+        assert params["min_conf"] == MIN_INFERENCE_CONFIDENCE
+        assert params["min_conf"] > 0.0

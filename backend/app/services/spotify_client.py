@@ -9,14 +9,55 @@ plus helper methods for fetching the user's personal library:
   - Followed artists
 """
 
+import asyncio
 import base64
 import hashlib
+import logging
 import os
 import httpx
 from datetime import datetime, timedelta
 from app.core.config import get_settings
 
 settings = get_settings()
+log = logging.getLogger(__name__)
+
+# Spotify returns 429 (rate limited) with a Retry-After header and 503 during
+# service degradation. The library helpers below paginate through tens of
+# thousands of items for power users, so a single 429 mid-walk used to silently
+# truncate the result. Retry transparently, honouring Retry-After.
+_RATE_LIMIT_MAX_RETRIES = 5
+_RATE_LIMIT_MAX_WAIT_SECONDS = 30
+
+
+async def _spotify_get(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict,
+    params: dict | None = None,
+    timeout: float = 15,
+) -> httpx.Response:
+    """GET against Spotify with automatic retry on 429/503."""
+    for attempt in range(_RATE_LIMIT_MAX_RETRIES):
+        resp = await client.get(url, headers=headers, params=params, timeout=timeout)
+        if resp.status_code not in (429, 503):
+            return resp
+        retry_after = resp.headers.get("Retry-After")
+        try:
+            wait_s = float(retry_after) if retry_after else 2 ** attempt
+        except ValueError:
+            wait_s = 2 ** attempt
+        wait_s = min(wait_s, _RATE_LIMIT_MAX_WAIT_SECONDS)
+        log.warning(
+            "spotify %s on %s — sleeping %.1fs (attempt %d/%d)",
+            resp.status_code,
+            url,
+            wait_s,
+            attempt + 1,
+            _RATE_LIMIT_MAX_RETRIES,
+        )
+        await asyncio.sleep(wait_s)
+    return resp
 
 
 def generate_code_verifier() -> str:
@@ -109,14 +150,10 @@ async def get_user_playlists(access_token: str) -> list[dict]:
     url = "https://api.spotify.com/v1/me/playlists"
     params = {"limit": 50}
 
+    headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient() as client:
         while url:
-            resp = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {access_token}"},
-                params=params,
-                timeout=15,
-            )
+            resp = await _spotify_get(client, url, headers=headers, params=params)
             resp.raise_for_status()
             data = resp.json()
             playlists.extend(data.get("items", []))
@@ -139,14 +176,10 @@ async def get_playlist_tracks(access_token: str, playlist_id: str) -> list[dict]
         "fields": "next,items(track(id,name,artists,album,duration_ms,preview_url,popularity))",
     }
 
+    headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient() as client:
         while url:
-            resp = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {access_token}"},
-                params=params,
-                timeout=15,
-            )
+            resp = await _spotify_get(client, url, headers=headers, params=params)
             if resp.status_code == 403:
                 # Skip playlists we can't access
                 break
@@ -172,14 +205,10 @@ async def get_liked_tracks(access_token: str, limit: int = 200) -> list[dict]:
     params = {"limit": 50}
     fetched = 0
 
+    headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient() as client:
         while url and fetched < limit:
-            resp = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {access_token}"},
-                params=params,
-                timeout=15,
-            )
+            resp = await _spotify_get(client, url, headers=headers, params=params)
             resp.raise_for_status()
             data = resp.json()
             for item in data.get("items", []):
@@ -202,11 +231,11 @@ async def get_top_tracks(
     time_range: short_term (4 weeks), medium_term (6 months), long_term (all time)
     """
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
+        resp = await _spotify_get(
+            client,
             "https://api.spotify.com/v1/me/top/tracks",
             headers={"Authorization": f"Bearer {access_token}"},
             params={"limit": 50, "time_range": time_range},
-            timeout=15,
         )
         resp.raise_for_status()
         return resp.json().get("items", [])
@@ -220,11 +249,11 @@ async def get_top_artists(
     Requires: user-top-read scope.
     """
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
+        resp = await _spotify_get(
+            client,
             "https://api.spotify.com/v1/me/top/artists",
             headers={"Authorization": f"Bearer {access_token}"},
             params={"limit": 20, "time_range": time_range},
-            timeout=15,
         )
         resp.raise_for_status()
         return resp.json().get("items", [])
@@ -233,11 +262,11 @@ async def get_top_artists(
 async def get_artist_top_tracks(access_token: str, artist_id: str) -> list[dict]:
     """Get top tracks for a specific artist."""
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
+        resp = await _spotify_get(
+            client,
             f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks",
             headers={"Authorization": f"Bearer {access_token}"},
             params={"market": "US"},
-            timeout=15,
         )
         resp.raise_for_status()
         return resp.json().get("tracks", [])

@@ -131,7 +131,9 @@ class TestGetSpotifyToken:
         mock_refresh.assert_not_called()
         assert result["access_token"] == "stale-tok"
 
-    async def test_serves_existing_token_when_refresh_fails(self):
+    async def test_raises_401_when_refresh_fails_on_expired_token(self):
+        # Token is already expired AND refresh failed → can't serve a broken
+        # token to the SDK silently; frontend must re-auth.
         user = _make_user(
             access_token="fallback-tok",
             refresh_token="refresh-tok",
@@ -143,10 +145,31 @@ class TestGetSpotifyToken:
             "app.api.v1.endpoints.auth.refresh_access_token",
             new=AsyncMock(side_effect=Exception("Spotify API down")),
         ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_spotify_token(user_id="uid-1", db=db)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "spotify_refresh_failed"
+
+    async def test_warns_when_refresh_fails_but_token_still_valid(self):
+        # Token expires soon (within 5 min) but is not yet expired; refresh
+        # failed. Serve the still-valid token with a warning so the frontend
+        # can preemptively re-auth before it actually expires.
+        user = _make_user(
+            access_token="still-valid-tok",
+            refresh_token="refresh-tok",
+            token_expires_at=_future(2),  # 2 minutes from now — needs refresh
+        )
+        db = _make_db(user)
+
+        with patch(
+            "app.api.v1.endpoints.auth.refresh_access_token",
+            new=AsyncMock(side_effect=Exception("Spotify API down")),
+        ):
             result = await get_spotify_token(user_id="uid-1", db=db)
 
-        # Falls back gracefully — returns existing token, does not raise
-        assert result["access_token"] == "fallback-tok"
+        assert result["access_token"] == "still-valid-tok"
+        assert result.get("refresh_warning") == "spotify_refresh_failed"
 
     async def test_404_if_user_not_found(self):
         db = _make_db(user=None)

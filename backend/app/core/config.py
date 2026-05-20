@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://redis:6379/0"
 
+    # Frontend (used by OAuth callback to redirect back into the SPA)
+    frontend_url: str = "http://localhost:3000"
+
     # Spotify
     spotify_client_id: str = ""
     spotify_client_secret: str = ""

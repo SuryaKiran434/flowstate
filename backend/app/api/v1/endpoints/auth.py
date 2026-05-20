@@ -153,9 +153,8 @@ async def spotify_callback(
     flowstate_token = create_access_token(data={"sub": str(user.id)})
 
     # Redirect frontend with token
-    frontend_url = "http://localhost:3000"
     return RedirectResponse(
-        url=f"{frontend_url}/dashboard?token={flowstate_token}",
+        url=f"{settings.frontend_url}/dashboard?token={flowstate_token}",
         status_code=302,
     )
 
@@ -192,7 +191,19 @@ async def get_spotify_token(
             user.token_expires_at = token_expires_at(token_data.get("expires_in", 3600))
             db.commit()
         except Exception:
-            pass  # serve existing token if refresh fails
+            # Refresh failed (revoked token, network issue, Spotify outage).
+            # Serving the cached token would cause silent playback failures in
+            # the Web Playback SDK. Tell the frontend so it can re-auth.
+            if expires_at < now:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="spotify_refresh_failed",
+                )
+            # Token still valid for now — serve it but warn the frontend.
+            return {
+                "access_token": user.access_token,
+                "refresh_warning": "spotify_refresh_failed",
+            }
 
     return {"access_token": user.access_token}
 

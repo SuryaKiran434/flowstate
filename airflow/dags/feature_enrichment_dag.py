@@ -1123,6 +1123,7 @@ def reclassify_with_ml_model(**context):
     (Mount this from the host via docker-compose when model is available.)
     """
     import json
+    import os
     import sys
 
     import numpy as np

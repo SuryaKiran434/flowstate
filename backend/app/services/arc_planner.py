@@ -18,10 +18,20 @@ import random
 from dataclasses import dataclass, field
 from typing import Optional
 
-import numpy as np
-
 
 # ─── Emotion Graph ────────────────────────────────────────────────────────────
+
+# Tracks classified below this confidence are treated as noise and excluded from
+# arc selection. Set conservatively (0.35) — uniform-random over 12 emotions is
+# 0.083, so 0.35 keeps anything meaningfully above chance while removing the
+# garbage predictions that historically polluted segments.
+MIN_INFERENCE_CONFIDENCE: float = 0.35
+
+# Used when borrowing tracks from adjacent emotions to fill a short segment.
+# We want tracks the model was reasonably sure about — the previous policy of
+# "borrow low-confidence neighbours as bridges" added noise, not coherence.
+ADJACENT_BORROW_MIN_CONFIDENCE: float = 0.5
+
 
 EMOTION_GRAPH: dict[str, dict[str, float]] = {
     "energetic": {"happy": 1.0, "euphoric": 1.2, "focused": 2.0, "tense": 2.5},
@@ -145,11 +155,12 @@ class ArcPlanner:
             JOIN track_features tf ON t.id = tf.track_id
             WHERE ut.user_id = cast(:uid as uuid)
               AND tf.emotion_label IS NOT NULL
+              AND tf.emotion_confidence >= :min_conf
               AND t.name IS NOT NULL
               AND t.duration_ms > 0
             ORDER BY RANDOM()
         """),
-            {"uid": user_id},
+            {"uid": user_id, "min_conf": MIN_INFERENCE_CONFIDENCE},
         ).fetchall()
 
         excluded = excluded_spotify_ids or set()
@@ -282,13 +293,27 @@ class ArcPlanner:
         if n == 1:
             return [max(5, int(duration_minutes * TRACKS_PER_MINUTE[path[0]]))]
 
-        avg_rate = np.mean([TRACKS_PER_MINUTE[e] for e in path])
+        rates = [TRACKS_PER_MINUTE[e] for e in path]
+        avg_rate = sum(rates) / n
         total = max(n * 3, int(duration_minutes * avg_rate))
-        base = total // n
-        remainder = total % n
-        allocation = [base] * n
-        allocation[0] += max(1, remainder // 2)
-        allocation[-1] += remainder - remainder // 2
+
+        # Largest-remainder (Hare quota) allocation by per-emotion rate.
+        # Each segment's share is proportional to how many tracks-per-minute
+        # that emotion needs (e.g. peaceful=0.20 vs angry=0.30) — faster
+        # emotions get more tracks because their tracks are shorter.
+        # Previous logic split `total // n` evenly then dumped the remainder
+        # on allocation[0] via `max(1, remainder // 2)`, which added a track
+        # to the opening segment even when total divided evenly across n.
+        weights = [r / sum(rates) for r in rates]
+        exact = [w * total for w in weights]
+        allocation = [int(e) for e in exact]
+        remainder = total - sum(allocation)
+        # Distribute remainder to segments with the largest fractional parts.
+        fractional = sorted(
+            range(n), key=lambda i: exact[i] - int(exact[i]), reverse=True
+        )
+        for i in range(remainder):
+            allocation[fractional[i]] += 1
         return [max(2, a) for a in allocation]
 
     def _compute_energy_directions(self, path: list[str]) -> list[str]:
@@ -324,29 +349,39 @@ class ArcPlanner:
         ]
         random.shuffle(candidates)
 
-        # Fallback: borrow low-confidence tracks from adjacent emotions
+        # Fallback when this emotion is under-represented in the user's library:
+        # borrow tracks from adjacent emotions that the classifier was confident
+        # about. A confidently-labelled "neutral" track is a better bridge to
+        # "focused" than a 30%-confidence track of any label.
         if len(candidates) < n_tracks:
             adjacent = set(self.graph.get(emotion, {}).keys())
+            existing_ids = {t.track_id for t in candidates}
             fallback = [
                 t
                 for t in track_pool
                 if t.emotion_label in adjacent
-                and t.emotion_confidence < 0.65  # borderline = good bridge
+                and t.emotion_confidence >= ADJACENT_BORROW_MIN_CONFIDENCE
                 and t.track_id not in used_track_ids
-                and t not in candidates
+                and t.track_id not in existing_ids
             ]
-            random.shuffle(fallback)
+            # Prefer highest-confidence neighbours first so borrowed tracks
+            # don't drag the segment further from its intended emotion.
+            fallback.sort(key=lambda t: t.emotion_confidence, reverse=True)
             candidates = candidates + fallback
 
+        # Small noise breaks ties without reordering tracks with meaningfully
+        # different energies — previous ±0.08 routinely flipped a 0.55-energy
+        # track ahead of a 0.60 on "ascending" segments.
+        jitter = 0.01
         if energy_direction == "ascending":
-            candidates.sort(key=lambda t: t.energy + random.uniform(-0.08, 0.08))
+            candidates.sort(key=lambda t: t.energy + random.uniform(-jitter, jitter))
         elif energy_direction == "descending":
             candidates.sort(
-                key=lambda t: t.energy + random.uniform(-0.08, 0.08), reverse=True
+                key=lambda t: t.energy + random.uniform(-jitter, jitter), reverse=True
             )
         else:
             candidates.sort(
-                key=lambda t: t.emotion_confidence + random.uniform(-0.08, 0.08),
+                key=lambda t: t.emotion_confidence + random.uniform(-jitter, jitter),
                 reverse=True,
             )
 

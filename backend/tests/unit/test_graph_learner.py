@@ -27,11 +27,11 @@ import pytest
 from app.services.arc_planner import EMOTION_GRAPH
 from app.services.graph_learner import (
     GraphLearner,
-    SKIP_PENALTY,
-    COMPLETION_BONUS,
+    EDGE_ADJUST_SCALE,
     MIN_MULT,
     MAX_MULT,
     MIN_SIGNALS,
+    MIN_SIGNALS_PER_EDGE,
 )
 
 USER_ID = str(uuid4())
@@ -102,31 +102,44 @@ class TestQuerySignals:
 # ─── _apply_adjustments ───────────────────────────────────────────────────────
 
 class TestApplyAdjustments:
-    def test_skip_penalty_increases_weight(self):
+    def test_skips_increase_weight_once_evidence_floor_met(self):
         gl    = GraphLearner()
         base  = EMOTION_GRAPH["tense"]["focused"]
-        skips = defaultdict(int, {("tense", "focused"): 1})
+        # Ratio-based formula needs >= MIN_SIGNALS_PER_EDGE observations per edge.
+        skips = defaultdict(int, {("tense", "focused"): MIN_SIGNALS_PER_EDGE})
         comps = defaultdict(int)
 
         adjusted = gl._apply_adjustments(comps, skips)
         new_w    = adjusted["tense"]["focused"]
 
         assert new_w > base
-        expected = base * max(MIN_MULT, min(MAX_MULT, 1.0 + 1 * SKIP_PENALTY))
+        # ratio = 1.0 → mult = 1 + (1.0 - 0.5) * EDGE_ADJUST_SCALE
+        expected = base * max(MIN_MULT, min(MAX_MULT, 1.0 + 0.5 * EDGE_ADJUST_SCALE))
         assert abs(new_w - expected) < 0.001
 
-    def test_completion_bonus_decreases_weight(self):
+    def test_completions_decrease_weight_once_evidence_floor_met(self):
         gl    = GraphLearner()
         base  = EMOTION_GRAPH["tense"]["focused"]
-        comps = defaultdict(int, {("tense", "focused"): 1})
+        comps = defaultdict(int, {("tense", "focused"): MIN_SIGNALS_PER_EDGE})
         skips = defaultdict(int)
 
         adjusted = gl._apply_adjustments(comps, skips)
         new_w    = adjusted["tense"]["focused"]
 
         assert new_w < base
-        expected = base * max(MIN_MULT, min(MAX_MULT, 1.0 - 1 * COMPLETION_BONUS))
+        # ratio = 0.0 → mult = 1 + (0.0 - 0.5) * EDGE_ADJUST_SCALE
+        expected = base * max(MIN_MULT, min(MAX_MULT, 1.0 - 0.5 * EDGE_ADJUST_SCALE))
         assert abs(new_w - expected) < 0.001
+
+    def test_single_skip_below_floor_does_not_move_edge(self):
+        """One skip is noise — must not move the graph."""
+        gl    = GraphLearner()
+        base  = EMOTION_GRAPH["tense"]["focused"]
+        skips = defaultdict(int, {("tense", "focused"): 1})
+        comps = defaultdict(int)
+
+        adjusted = gl._apply_adjustments(comps, skips)
+        assert abs(adjusted["tense"]["focused"] - base) < 0.001
 
     def test_multiplier_clamped_at_max(self):
         gl    = GraphLearner()

@@ -38,12 +38,22 @@ from copy import deepcopy
 from app.services.arc_planner import EMOTION_GRAPH
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
+#
+# The previous formula `mult = 1 + skips*0.4 − completions*0.25` over-reacted
+# to single observations: one skip pushed an edge to 1.4× cost, three skips to
+# 2.2×. A single bad listening session could corrupt the graph.
+#
+# New formula is ratio-based with a per-edge evidence floor:
+#   ratio = skips / (skips + completions)            # in [0, 1]
+#   mult  = 1 + (ratio − 0.5) * EDGE_ADJUST_SCALE   # in [1-S/2, 1+S/2]
+# Edges are only adjusted once they cross MIN_SIGNALS_PER_EDGE observations,
+# so isolated skips don't move the graph.
 
-SKIP_PENALTY = 0.4  # each skip adds this to the multiplier (makes edge heavier)
-COMPLETION_BONUS = 0.25  # each completion subtracts this (makes edge lighter)
+EDGE_ADJUST_SCALE = 1.0  # max swing: ratio=1 → +0.5 mult, ratio=0 → −0.5 mult
 MIN_MULT = 0.4  # never reduce an edge below 40 % of its base weight
 MAX_MULT = 3.0  # never inflate an edge above 3× its base weight
 MIN_SIGNALS = 5  # minimum total observations before personalisation kicks in
+MIN_SIGNALS_PER_EDGE = 3  # per-edge floor before that specific edge is adjusted
 
 
 class GraphLearner:
@@ -167,11 +177,13 @@ class GraphLearner:
                 key = (from_e, to_e)
                 n_skips = skips[key]
                 n_comps = completions[key]
+                n_total = n_skips + n_comps
 
-                if n_skips == 0 and n_comps == 0:
-                    continue  # no signal for this edge — keep default
+                if n_total < MIN_SIGNALS_PER_EDGE:
+                    continue  # not enough evidence to move this specific edge
 
-                mult = 1.0 + n_skips * SKIP_PENALTY - n_comps * COMPLETION_BONUS
+                ratio = n_skips / n_total  # 0 = always completed, 1 = always skipped
+                mult = 1.0 + (ratio - 0.5) * EDGE_ADJUST_SCALE
                 mult = max(MIN_MULT, min(MAX_MULT, mult))
                 neighbors[to_e] = round(neighbors[to_e] * mult, 4)
 
