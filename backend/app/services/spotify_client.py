@@ -44,9 +44,9 @@ async def _spotify_get(
             return resp
         retry_after = resp.headers.get("Retry-After")
         try:
-            wait_s = float(retry_after) if retry_after else 2 ** attempt
+            wait_s = float(retry_after) if retry_after else 2**attempt
         except ValueError:
-            wait_s = 2 ** attempt
+            wait_s = 2**attempt
         wait_s = min(wait_s, _RATE_LIMIT_MAX_WAIT_SECONDS)
         log.warning(
             "spotify %s on %s — sleeping %.1fs (attempt %d/%d)",
