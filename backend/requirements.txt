@@ -7,7 +7,7 @@ python-multipart==0.0.32
 sqlalchemy==2.0.23
 alembic==1.12.1
 psycopg2-binary==2.9.9
-pgvector==0.2.4
+pgvector==0.5.0
 
 # ─── Cache ───────────────────────────────────────────────────────
 redis==5.0.1
