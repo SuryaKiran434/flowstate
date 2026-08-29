@@ -1,4 +1,4 @@
-FROM apache/airflow:2.8.0-python3.11
+FROM apache/airflow:3.3.1-python3.11
 
 # Switch to root to install system dependencies
 USER root
