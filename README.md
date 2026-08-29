@@ -192,6 +192,10 @@ flowstate/
 │   ├── dependabot.yml               # Weekly pip / npm / docker / actions updates
 │   └── CODEOWNERS
 │
+├── docker/
+│   └── postgres/initdb/
+│       └── 01-create-airflow-db.sh  # Creates the `airflow` DB on first init
+│
 ├── docs/
 │   ├── PRD.md
 │   ├── DB_SCHEMA.md
@@ -417,16 +421,19 @@ The stack is six services:
 | Airflow | `flowstate_airflow` | `./airflow/Dockerfile` | 8080 | http://localhost:8080 (admin / admin) |
 | MLflow | `flowstate_mlflow` | `python:3.11-slim` | 5001 → 5000 | http://localhost:5001 |
 
-Database setup for the app is automatic: Compose creates the `flowstate` database, and the backend calls `Base.metadata.create_all()` at startup, so all 9 tables exist as soon as the API is up. **There is no Alembic migration step.**
+Database setup is automatic, for both databases:
 
-Airflow is the one exception. It points at a *separate* `airflow` database on the same Postgres instance, and the `postgres` image only auto-creates `POSTGRES_DB`. Create it once, before or shortly after the first `up`:
+- **`flowstate`** — created by the Postgres image from `POSTGRES_DB`. The backend then calls `Base.metadata.create_all()` at startup, so all 9 tables exist as soon as the API is up. **There is no Alembic migration step.**
+- **`airflow`** — Airflow points at a *separate* database on the same Postgres instance, and the image only auto-creates `POSTGRES_DB`. `docker/postgres/initdb/01-create-airflow-db.sh` is mounted into `/docker-entrypoint-initdb.d/`, which the Postgres entrypoint runs when the cluster is first initialised, and it issues the `CREATE DATABASE`. Airflow then runs `airflow db migrate` itself and creates an `admin` / `admin` user.
 
-```bash
-docker exec flowstate_db psql -U flowstate -c 'CREATE DATABASE airflow;'
-docker compose restart airflow
-```
+No manual `CREATE DATABASE` step is needed on a fresh `docker compose up`.
 
-Airflow then runs `airflow db migrate` itself and creates an `admin` / `admin` user.
+> **Upgrading from an older checkout:** `/docker-entrypoint-initdb.d/` scripts run *only* on first cluster init, so an existing `postgres_data` volume will not pick this up. Either create the database once by hand —
+> ```bash
+> docker exec flowstate_db psql -U flowstate -c 'CREATE DATABASE airflow;'
+> docker compose restart airflow
+> ```
+> — or discard the volume and let the init script run: `docker compose down -v && docker compose up -d` (this deletes all local data).
 
 Check it came up:
 
@@ -524,7 +531,7 @@ The backend suite needs no database or Redis — every DB and network interactio
 | Backend exits on startup with `could not translate host name "db"` | `DATABASE_URL` still points at the Compose hostname. On the manual path it must be `localhost`. |
 | `/auth/spotify/login` returns a connection error | Redis is not up (it connects lazily, so this surfaces at login, not startup). `docker compose up -d redis`. |
 | Playback controls do nothing | Web Playback SDK requires Spotify Premium. |
-| Airflow container restart-loops on `database "airflow" does not exist` | Create it: `docker exec flowstate_db psql -U flowstate -c 'CREATE DATABASE airflow;'` |
+| Airflow container restart-loops on `database "airflow" does not exist` | The init script only runs on a *fresh* `postgres_data` volume. On a pre-existing volume, create it once: `docker exec flowstate_db psql -U flowstate -c 'CREATE DATABASE airflow;' && docker compose restart airflow` — or reset with `docker compose down -v`. |
 | Airflow tasks fail on `librosa` / `yt-dlp` import | The `airflow` service must be built from `airflow/Dockerfile` (which bakes them in), not from the stock image. `docker compose build airflow`. |
 | yt-dlp returns no results / gets throttled | Expected at volume — see [LIMITATIONS.md](LIMITATIONS.md). |
 

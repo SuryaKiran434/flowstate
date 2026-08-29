@@ -13,7 +13,12 @@ USER airflow
 # Pre-bake all ML/audio dependencies so they survive container restarts.
 # These are NOT in the base airflow image and were previously lost on every
 # docker-compose down/up cycle.
-RUN pip install --no-cache-dir --user \
+#
+# No `--user`: since Airflow 2.9 the official image runs pip inside a
+# virtualenv, where user site-packages are not visible, and `pip install
+# --user` aborts with "Can not perform a '--user' install." — which failed the
+# image build outright, so the airflow service could never start.
+RUN pip install --no-cache-dir \
     "numpy>=1.26.4" \
     librosa==0.10.1 \
     yt-dlp>=2024.1.0 \
