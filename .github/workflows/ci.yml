@@ -48,6 +48,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The SonarCloud scan at the end of this job needs the full history to
+          # attribute code to authors and to work out what counts as "new code";
+          # a shallow clone breaks both.
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v7
@@ -84,6 +89,22 @@ jobs:
         with:
           file: backend/coverage.xml
           flags: backend
+
+      # One scan for the whole monorepo, run from this job because this is where
+      # the coverage report exists. It analyses backend/app AND frontend/src --
+      # both trees are present in the checkout, and neither npm install nor a
+      # build is needed to analyse JSX. Running a second scan from the frontend
+      # job would just overwrite this one: same project key, same commit.
+      #
+      # Configuration lives in sonar-project.properties at the repo root.
+      #
+      # Analysis is advisory, not a gate: continue-on-error keeps a SonarCloud
+      # outage or a scanner hiccup from failing the required check.
+      - name: SonarCloud analysis
+        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # ─── Frontend: Lint + Build ─────────────────────────────────────
   frontend:
