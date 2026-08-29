@@ -33,6 +33,8 @@ reliable discriminator.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 # ── Unicode ranges (inclusive, as (lo, hi) tuples) ──────────────────────────
 
 _SCRIPT_RANGES: list[tuple[int, int, str]] = [
@@ -53,7 +55,17 @@ _SCRIPT_RANGES: list[tuple[int, int, str]] = [
     (0x0590, 0x05FF, "he"),  # Hebrew
 ]
 
+# Lowest code point of any range above. Nothing below it can ever match, so a
+# single comparison retires every ASCII/Latin character instead of walking all
+# 12 ranges — which is the common case for most libraries.
+_LOWEST_SCRIPT_CODEPOINT: int = min(lo for lo, _hi, _lang in _SCRIPT_RANGES)
 
+
+# detect() is called once per library row on every arc request, and libraries
+# are dominated by a small number of repeated artists, so memoisation turns
+# almost all of those calls into a dict lookup. The function is pure — same
+# (title, artist) always yields the same code — so caching is safe.
+@lru_cache(maxsize=8192)
 def detect(title: str, artist: str = "") -> str:
     """
     Detect the primary language code for a track given its title and artist.
@@ -66,6 +78,8 @@ def detect(title: str, artist: str = "") -> str:
     text = (title or "") + " " + (artist or "")
     for ch in text:
         cp = ord(ch)
+        if cp < _LOWEST_SCRIPT_CODEPOINT:
+            continue  # ASCII / Latin / Greek / Cyrillic — below every range
         for lo, hi, lang in _SCRIPT_RANGES:
             if lo <= cp <= hi:
                 return lang
