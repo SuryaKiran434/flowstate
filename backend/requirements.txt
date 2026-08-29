@@ -34,9 +34,12 @@ scikit-learn==1.9.0
 yt-dlp>=2024.12.23
 
 # ─── Dev & Testing ───────────────────────────────────────────────
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
+# pytest-asyncio >= 0.24 requires pytest >= 8.2; the two pins move together.
+# Loop-scope configuration lives in pytest.ini (asyncio_mode +
+# asyncio_default_{fixture,test}_loop_scope).
+pytest==8.4.2
+pytest-asyncio==0.26.0
+pytest-cov==6.3.0
 ruff==0.15.8
 
 # NOTE: torch, mlflow, and apache-airflow excluded intentionally.

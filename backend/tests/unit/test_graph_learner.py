@@ -278,10 +278,9 @@ class TestUserGraphEndpoint:
         assert result["personalised"] is True
         assert len(result["adjustments"]) > 0
 
-    def test_generate_arc_includes_personalised_flag(self):
+    async def test_generate_arc_includes_personalised_flag(self):
         """generate_arc response must include personalised boolean."""
         from app.api.v1.endpoints.arc import generate_arc, ArcRequest
-        import asyncio
 
         db   = MagicMock()
         db.execute.return_value.fetchall.return_value = []  # no signals → not personalised
@@ -296,15 +295,13 @@ class TestUserGraphEndpoint:
             "interpretation": "...", "method": "fallback",
         }
 
-        async def run():
-            with patch("app.api.v1.endpoints.arc.parser.parse", return_value=mock_mood), \
-                 patch("app.api.v1.endpoints.arc.planner.plan_from_db", return_value=mock_arc):
-                return await generate_arc(
-                    request=ArcRequest(mood_text="I feel tense", duration_minutes=20),
-                    user_id=USER_ID,
-                    db=db,
-                )
+        with patch("app.api.v1.endpoints.arc.parser.parse", return_value=mock_mood), \
+             patch("app.api.v1.endpoints.arc.planner.plan_from_db", return_value=mock_arc):
+            result = await generate_arc(
+                request=ArcRequest(mood_text="I feel tense", duration_minutes=20),
+                user_id=USER_ID,
+                db=db,
+            )
 
-        result = asyncio.get_event_loop().run_until_complete(run())
         assert "personalised" in result
         assert result["personalised"] is False
