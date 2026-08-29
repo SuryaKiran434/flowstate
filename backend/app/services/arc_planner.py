@@ -6,7 +6,8 @@ a source emotion to a target emotion using graph-based path planning.
 
 Algorithm:
 1. Build a weighted emotion graph (nodes = emotions, edges = transition costs)
-2. Run modified Dijkstra to find the lowest-cost emotional path from source → target
+2. Read the lowest-cost emotional path source → target out of a cached
+   all-pairs (Floyd-Warshall) table keyed on that graph's contents
 3. For each node along the path, query the feature store for best-matching tracks
 4. Sequence tracks within each segment by energy gradient (smooth transitions)
 
@@ -15,7 +16,9 @@ Author: Surya Kiran Katragadda
 
 import heapq
 import random
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Optional
 
 
@@ -95,11 +98,84 @@ class TrackCandidate:
     language: str = "en"  # BCP-47-style code inferred from Unicode script
 
 
-@dataclass(order=True)
-class _PQEntry:
-    cost: float
-    node: str = field(compare=False)
-    path: list[str] = field(compare=False)
+# ─── All-pairs shortest paths ─────────────────────────────────────────────────
+#
+# The emotion graph is tiny (12 nodes, ~40 edges), so one Floyd-Warshall pass
+# (12^3 = 1728 relaxations) is cheaper than a single Dijkstra run in practice —
+# and it answers every source/target query afterwards for free.
+#
+# The result is memoised on a *content* digest of the graph, never on identity
+# or on "the global graph".  GraphLearner.load_user_graph() returns a distinct
+# personalised graph per user, and serving one user's shortest paths to another
+# would be a correctness bug, not a performance one.
+
+
+def _graph_signature(graph: dict[str, dict[str, float]]) -> tuple:
+    """Canonical, hashable digest of a weighted graph — the APSP cache key."""
+    return tuple(
+        (node, tuple(sorted(edges.items()))) for node, edges in sorted(graph.items())
+    )
+
+
+@lru_cache(maxsize=256)
+def _all_pairs_shortest_paths(signature: tuple):
+    """
+    Floyd-Warshall over a graph signature.
+
+    Returns (nodes, index, dist, nxt):
+        nodes — list of node names, positionally aligned with the matrices
+        index — {node: matrix position}
+        dist  — dist[i][j] = total cost of the cheapest i→j walk (inf if none)
+        nxt   — nxt[i][j] = position of the next hop on that walk (None if none)
+
+    Cached on `signature`, so callers must go through all_pairs_shortest_paths().
+    """
+    nodes = [node for node, _ in signature]
+    index = {node: i for i, node in enumerate(nodes)}
+    n = len(nodes)
+    inf = float("inf")
+
+    dist: list[list[float]] = [[inf] * n for _ in range(n)]
+    nxt: list[list[Optional[int]]] = [[None] * n for _ in range(n)]
+    for i in range(n):
+        dist[i][i] = 0.0
+        nxt[i][i] = i
+
+    for node, edges in signature:
+        i = index[node]
+        for neighbour, weight in edges:
+            j = index.get(neighbour)
+            # A neighbour that is not itself a key is a dead end: it has no
+            # outgoing edges and find_emotional_path() rejects it as a target,
+            # so it can never be an intermediate hop. Dropping it matches the
+            # reachability the old Dijkstra produced.
+            if j is None:
+                continue
+            if weight < dist[i][j]:
+                dist[i][j] = weight
+                nxt[i][j] = j
+
+    for k in range(n):
+        dist_k = dist[k]
+        for i in range(n):
+            dist_ik = dist[i][k]
+            if dist_ik == inf:
+                continue
+            dist_i, nxt_i, nxt_ik = dist[i], nxt[i], nxt[i][k]
+            for j in range(n):
+                if dist_k[j] == inf:
+                    continue
+                candidate = dist_ik + dist_k[j]
+                if candidate < dist_i[j]:
+                    dist_i[j] = candidate
+                    nxt_i[j] = nxt_ik
+
+    return nodes, index, dist, nxt
+
+
+def all_pairs_shortest_paths(graph: dict[str, dict[str, float]]):
+    """Cached Floyd-Warshall for `graph`. See _all_pairs_shortest_paths()."""
+    return _all_pairs_shortest_paths(_graph_signature(graph))
 
 
 class ArcPlanner:
@@ -158,7 +234,6 @@ class ArcPlanner:
               AND tf.emotion_confidence >= :min_conf
               AND t.name IS NOT NULL
               AND t.duration_ms > 0
-            ORDER BY RANDOM()
         """),
             {"uid": user_id, "min_conf": MIN_INFERENCE_CONFIDENCE},
         ).fetchall()
@@ -240,19 +315,59 @@ class ArcPlanner:
         When a user skips 2+ consecutive tracks in `skipped_emotion`, find the
         best neighbor node to re-enter from — the one with the shortest path
         to `target`, so the re-planned arc makes natural progress.
+
+        Ranked by true path *cost*, not hop count: the graph is weighted, so a
+        two-hop route over 3.5-cost edges is a worse re-entry than a three-hop
+        route over 1.0-cost ones, and the old hop-count ranking contradicted
+        this docstring. Each lookup is now an O(1) probe into the cached
+        all-pairs matrix — it used to run a full Dijkstra per neighbour.
         """
         neighbors = list(self.graph.get(skipped_emotion, {}).keys())
         if not neighbors:
             return skipped_emotion  # no neighbors — stay put
 
-        # Pick the neighbor with the shortest path to target
-        best = min(neighbors, key=lambda n: len(self.find_emotional_path(n, target)))
-        return best
+        if target not in self.graph:
+            raise ValueError(f"Unknown target emotion: {target}")
+
+        # Fetch the matrix once, then probe it per neighbour. Going through
+        # emotional_distance() here would re-hash the graph on every neighbour.
+        _nodes, index, dist, _nxt = self._apsp()
+        column = index[target]
+
+        def _cost(neighbour: str) -> float:
+            if neighbour not in index:
+                raise ValueError(f"Unknown source emotion: {neighbour}")
+            return dist[index[neighbour]][column]
+
+        # min() keeps the first minimum, so ties break on graph edge order.
+        return min(neighbors, key=_cost)
 
     # ── Core planning ─────────────────────────────────────────────────────────
 
+    def _apsp(self):
+        """Cached all-pairs shortest paths for the graph THIS planner holds."""
+        return all_pairs_shortest_paths(self.graph)
+
+    def emotional_distance(self, source: str, target: str) -> float:
+        """
+        Total edge cost of the cheapest source -> target walk.
+        Infinity when target is unreachable. O(1) after the first call.
+        """
+        if source not in self.graph:
+            raise ValueError(f"Unknown source emotion: {source}")
+        if target not in self.graph:
+            raise ValueError(f"Unknown target emotion: {target}")
+        _nodes, index, dist, _nxt = self._apsp()
+        return dist[index[source]][index[target]]
+
     def find_emotional_path(self, source: str, target: str) -> list[str]:
-        """Modified Dijkstra on the emotion graph."""
+        """
+        Lowest-cost path across the emotion graph.
+
+        Reconstructed from the cached all-pairs successor matrix instead of
+        re-running Dijkstra per call, which also drops the `path + [neighbor]`
+        list copy the old heap push made on every edge relaxation.
+        """
         if source == target:
             return [source]
         if source not in self.graph:
@@ -260,29 +375,16 @@ class ArcPlanner:
         if target not in self.graph:
             raise ValueError(f"Unknown target emotion: {target}")
 
-        pq = [_PQEntry(cost=0.0, node=source, path=[source])]
-        visited: dict[str, float] = {}
+        nodes, index, _dist, nxt = self._apsp()
+        i, j = index[source], index[target]
+        if nxt[i][j] is None:
+            return [source, target]  # unreachable — same fallback as before
 
-        while pq:
-            entry = heapq.heappop(pq)
-            current_cost, current_node, path = entry.cost, entry.node, entry.path
-
-            if current_node in visited and visited[current_node] <= current_cost:
-                continue
-            visited[current_node] = current_cost
-
-            if current_node == target:
-                return path
-
-            for neighbor, edge_weight in self.graph.get(current_node, {}).items():
-                new_cost = current_cost + edge_weight
-                if neighbor not in visited or visited[neighbor] > new_cost:
-                    heapq.heappush(
-                        pq,
-                        _PQEntry(cost=new_cost, node=neighbor, path=path + [neighbor]),
-                    )
-
-        return [source, target]
+        path = [source]
+        while i != j:
+            i = nxt[i][j]
+            path.append(nodes[i])
+        return path
 
     def _allocate_tracks_per_segment(
         self,
@@ -332,6 +434,19 @@ class ArcPlanner:
                     directions.append("neutral")
         return directions
 
+    @staticmethod
+    def _bucket_pool_by_emotion(
+        track_pool: list[TrackCandidate],
+    ) -> dict[str, list[TrackCandidate]]:
+        """
+        Index the pool by emotion_label once so segment selection never has to
+        rescan the whole library. Preserves pool order within each bucket.
+        """
+        buckets: dict[str, list[TrackCandidate]] = defaultdict(list)
+        for track in track_pool:
+            buckets[track.emotion_label].append(track)
+        return buckets
+
     def _select_tracks_for_segment(
         self,
         emotion: str,
@@ -339,28 +454,32 @@ class ArcPlanner:
         n_tracks: int,
         energy_direction: str = "neutral",
         used_track_ids: Optional[set] = None,
+        buckets: Optional[dict[str, list[TrackCandidate]]] = None,
     ) -> list[TrackCandidate]:
+        """
+        `buckets` is `track_pool` pre-indexed by emotion_label. plan() builds it
+        once and hands it to every segment; when omitted it is built here, so
+        direct callers keep working with just the pool list.
+        """
         used_track_ids = used_track_ids or set()
+        if buckets is None:
+            buckets = self._bucket_pool_by_emotion(track_pool)
 
         candidates = [
-            t
-            for t in track_pool
-            if t.emotion_label == emotion and t.track_id not in used_track_ids
+            t for t in buckets.get(emotion, ()) if t.track_id not in used_track_ids
         ]
-        random.shuffle(candidates)
 
         # Fallback when this emotion is under-represented in the user's library:
         # borrow tracks from adjacent emotions that the classifier was confident
         # about. A confidently-labelled "neutral" track is a better bridge to
         # "focused" than a 30%-confidence track of any label.
         if len(candidates) < n_tracks:
-            adjacent = set(self.graph.get(emotion, {}).keys())
             existing_ids = {t.track_id for t in candidates}
             fallback = [
                 t
-                for t in track_pool
-                if t.emotion_label in adjacent
-                and t.emotion_confidence >= ADJACENT_BORROW_MIN_CONFIDENCE
+                for adjacent in self.graph.get(emotion, {})
+                for t in buckets.get(adjacent, ())
+                if t.emotion_confidence >= ADJACENT_BORROW_MIN_CONFIDENCE
                 and t.track_id not in used_track_ids
                 and t.track_id not in existing_ids
             ]
@@ -372,20 +491,29 @@ class ArcPlanner:
         # Small noise breaks ties without reordering tracks with meaningfully
         # different energies — previous ±0.08 routinely flipped a 0.55-energy
         # track ahead of a 0.60 on "ascending" segments.
+        #
+        # nsmallest/nlargest are order-equivalent to sorted(...)[:n_tracks] but
+        # cost O(n log n_tracks) instead of sorting every candidate. No shuffle
+        # first: every branch below re-sorts immediately and the continuous
+        # jitter already breaks ties, so shuffling was pure dead work.
         jitter = 0.01
         if energy_direction == "ascending":
-            candidates.sort(key=lambda t: t.energy + random.uniform(-jitter, jitter))
-        elif energy_direction == "descending":
-            candidates.sort(
-                key=lambda t: t.energy + random.uniform(-jitter, jitter), reverse=True
+            return heapq.nsmallest(
+                n_tracks,
+                candidates,
+                key=lambda t: t.energy + random.uniform(-jitter, jitter),
             )
-        else:
-            candidates.sort(
-                key=lambda t: t.emotion_confidence + random.uniform(-jitter, jitter),
-                reverse=True,
+        if energy_direction == "descending":
+            return heapq.nlargest(
+                n_tracks,
+                candidates,
+                key=lambda t: t.energy + random.uniform(-jitter, jitter),
             )
-
-        return candidates[:n_tracks]
+        return heapq.nlargest(
+            n_tracks,
+            candidates,
+            key=lambda t: t.emotion_confidence + random.uniform(-jitter, jitter),
+        )
 
     def plan(
         self,
@@ -416,6 +544,9 @@ class ArcPlanner:
         allocation = self._allocate_tracks_per_segment(arc_path, duration_minutes)
         directions = self._compute_energy_directions(arc_path)
 
+        # Index the pool by emotion once, rather than rescanning it per segment.
+        buckets = self._bucket_pool_by_emotion(track_pool)
+
         segments = []
         used_ids: set[str] = set()  # track_id UUIDs
         used_spotify_ids: set[str] = set()  # spotify_ids — second dedup layer
@@ -430,6 +561,7 @@ class ArcPlanner:
                 n_tracks=n_tracks,
                 energy_direction=direction,
                 used_track_ids=used_ids,
+                buckets=buckets,
             )
             # Filter any that share a spotify_id already used (cross-segment safety net)
             selected = [t for t in selected if t.spotify_id not in used_spotify_ids]

@@ -6,9 +6,9 @@ emotion and a shared arc is planned toward a common target.
 
 Aggregation strategy:
   For each emotion in the graph, compute the sum of shortest-path distances to
-  every participant's source emotion (Dijkstra).  The emotion with the minimum
-  total distance is the "centroid" — the most musically central starting point
-  for a group with divergent emotional states.
+  every participant's source emotion, read from arc_planner's cached all-pairs
+  matrix.  The emotion with the minimum total distance is the "centroid" — the
+  most musically central starting point for a group with divergent states.
 
 Usage:
     svc = CollabArcService()
@@ -17,13 +17,16 @@ Usage:
     arc = svc.generate_arc(session.invite_code, host_id, db)
 """
 
-import heapq
 import random
 import string
 from typing import Optional
 
 from app.models.collab import CollabSession, CollabParticipant
-from app.services.arc_planner import ArcPlanner, EMOTION_GRAPH
+from app.services.arc_planner import (
+    ArcPlanner,
+    EMOTION_GRAPH,
+    all_pairs_shortest_paths,
+)
 from app.services.mood_parser import VALID_EMOTIONS
 
 
@@ -51,24 +54,18 @@ def _shortest_distances(
     source: str, graph: dict[str, dict[str, float]]
 ) -> dict[str, float]:
     """
-    Dijkstra from source → dict of {emotion: min_cost}.
+    Shortest-path cost from `source` to every node → {emotion: min_cost}.
     Unreachable nodes get infinity.
+
+    Reads one row out of arc_planner's cached all-pairs matrix instead of
+    running a fresh Dijkstra: aggregate_source_emotion() calls this once per
+    unique participant emotion, and the graph is identical across those calls.
     """
-    dist: dict[str, float] = {e: float("inf") for e in graph}
-    dist[source] = 0.0
-    pq = [(0.0, source)]
-
-    while pq:
-        cost, node = heapq.heappop(pq)
-        if cost > dist[node]:
-            continue
-        for neighbour, weight in graph.get(node, {}).items():
-            new_cost = cost + weight
-            if new_cost < dist.get(neighbour, float("inf")):
-                dist[neighbour] = new_cost
-                heapq.heappush(pq, (new_cost, neighbour))
-
-    return dist
+    _nodes, index, dist, _nxt = all_pairs_shortest_paths(graph)
+    if source not in index:
+        return {emotion: float("inf") for emotion in graph}
+    row = dist[index[source]]
+    return {emotion: row[index[emotion]] for emotion in graph}
 
 
 def _generate_invite_code(length: int = 6) -> str:
@@ -267,8 +264,8 @@ class CollabArcService:
         Find the graph-centroid emotion for a list of source emotions.
 
         For each candidate emotion, sum the shortest-path distances from all
-        source emotions to that candidate (using bidirectional Dijkstra).
-        The candidate with the lowest total distance is the centroid.
+        source emotions to that candidate, looked up in the cached all-pairs
+        matrix.  The candidate with the lowest total distance is the centroid.
 
         Ties broken alphabetically for determinism.
         Single-emotion lists return that emotion unchanged.
@@ -278,7 +275,7 @@ class CollabArcService:
         if len(source_emotions) == 1:
             return source_emotions[0]
 
-        # Pre-compute Dijkstra from every unique source
+        # One distance row per unique source, off the shared cached matrix
         unique_sources = list(set(source_emotions))
         dist_from = {s: _shortest_distances(s, EMOTION_GRAPH) for s in unique_sources}
 
