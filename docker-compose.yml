@@ -8,12 +8,22 @@ services:
       POSTGRES_USER:     ${POSTGRES_USER:-flowstate}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flowstate_dev}
       POSTGRES_DB:       ${POSTGRES_DB:-flowstate}
+      # Consumed by docker/postgres/initdb/01-create-airflow-db.sh, which
+      # creates the second database that the airflow service connects to.
+      AIRFLOW_POSTGRES_DB: ${AIRFLOW_POSTGRES_DB:-airflow}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Everything in this directory is executed once, on first cluster init.
+      # Read-only: the entrypoint only needs to run these, never write them.
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
     healthcheck:
-      test:     ["CMD-SHELL", "pg_isready -U flowstate"]
+      # -h 127.0.0.1 on purpose: while the init scripts run, the postgres
+      # entrypoint has a temporary server up with listen_addresses='' (unix
+      # socket only). A socket-based pg_isready would report healthy before
+      # the airflow database exists and let dependants start too early.
+      test:     ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-flowstate} -d ${POSTGRES_DB:-flowstate}"]
       interval: 10s
       timeout:  5s
       retries:  5
@@ -99,11 +109,19 @@ services:
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./data:/opt/airflow/data
+    # Sequenced on purpose. The previous form ended in
+    #   ... || true && airflow webserver & airflow scheduler
+    # where `&` split the whole chain: `airflow scheduler` started immediately,
+    # in parallel with `db migrate`, and died with "You need to initialize the
+    # database" — and because it was the container's foreground process, the
+    # container died with it. Migrate first, then background the webserver and
+    # exec the scheduler as PID 1.
     command: >
       bash -c "
-        airflow db migrate &&
-        airflow users create --username admin --password admin --firstname Surya --lastname Kiran --role Admin --email surya@flowstate.dev 2>/dev/null || true &&
-        airflow webserver & airflow scheduler
+        airflow db migrate || exit 1;
+        airflow users create --username admin --password admin --firstname Surya --lastname Kiran --role Admin --email surya@flowstate.dev 2>/dev/null || true;
+        airflow webserver &
+        exec airflow scheduler
       "
 
   # ─── MLflow Tracking ─────────────────────────────────────────────
