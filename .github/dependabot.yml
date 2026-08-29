@@ -1,0 +1,73 @@
+# Dependabot configuration — Flowstate
+#
+# Ecosystems mirror what actually lives in this repo:
+#   pip            → backend/requirements.txt
+#   npm            → frontend/package.json + package-lock.json
+#   docker         → backend/Dockerfile, frontend/Dockerfile, airflow/Dockerfile
+#   github-actions → .github/workflows/*.yml
+#
+# open-pull-requests-limit is capped at 5 per ecosystem so a weekly run cannot
+# flood the queue — main requires the "Backend (Python)", "Frontend (React)"
+# and "Docker Build" checks to pass on every PR.
+
+version: 2
+
+updates:
+  # ─── Backend: Python (backend/requirements.txt) ──────────────────
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # ─── Frontend: npm (frontend/package.json) ───────────────────────
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # ─── Docker base images ──────────────────────────────────────────
+  # One entry per directory containing a Dockerfile.
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+
+  - package-ecosystem: "docker"
+    directory: "/airflow"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # ─── GitHub Actions (.github/workflows) ──────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
