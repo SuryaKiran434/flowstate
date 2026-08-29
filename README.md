@@ -543,7 +543,9 @@ The backend suite needs no database or Redis — every DB and network interactio
 cd backend && python3 -m pytest
 ```
 
-510 tests across 18 test files: **509 pass**, with one known failure in `test_graph_learner.py::TestUserGraphEndpoint::test_generate_arc_includes_personalised_flag` that predates the current work. Coverage spans every service, endpoint function, and integration path.
+510 tests across 18 test files, **all passing** on Python 3.11 (the version CI and `backend/Dockerfile` use). Coverage spans every service, endpoint function, and integration path.
+
+The failure in `test_graph_learner.py::TestUserGraphEndpoint::test_generate_arc_includes_personalised_flag` noted in earlier revisions of this file was environment-specific: the test drove its own loop via the deprecated `asyncio.get_event_loop().run_until_complete(...)`, which behaves differently on newer Python versions than on 3.11. It is now a plain `async def` handled by pytest-asyncio, so it no longer depends on that.
 
 | Test File | Coverage |
 |---|---|
