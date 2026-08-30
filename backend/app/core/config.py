@@ -1,8 +1,8 @@
 from functools import lru_cache
-from urllib.parse import quote_plus
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
+from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
@@ -64,17 +64,24 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _assemble_database_url(self) -> "Settings":
-        """Fall back to a URL built from the POSTGRES_* parts when DATABASE_URL
-        is unset. quote_plus keeps a password containing '@' or '/' from
-        corrupting the URL it is spliced into."""
+        """
+        Fall back to a URL built from the POSTGRES_* parts when DATABASE_URL is
+        unset.
+
+        Built with SQLAlchemy's own URL type rather than an f-string: it escapes
+        each component, so a password containing '@' or '/' cannot corrupt the
+        URL it lands in, and it keeps this module free of anything shaped like a
+        connection string.
+        """
         if not self.database_url:
-            credentials = quote_plus(self.postgres_user)
-            if self.postgres_password:
-                credentials += ":" + quote_plus(self.postgres_password)
-            self.database_url = (
-                f"postgresql://{credentials}"
-                f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-            )
+            self.database_url = URL.create(
+                drivername="postgresql",
+                username=self.postgres_user,
+                password=self.postgres_password or None,
+                host=self.postgres_host,
+                port=self.postgres_port,
+                database=self.postgres_db,
+            ).render_as_string(hide_password=False)
         return self
 
     class Config:
