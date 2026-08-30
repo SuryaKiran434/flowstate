@@ -1,5 +1,8 @@
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+from urllib.parse import quote_plus
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -8,12 +11,19 @@ class Settings(BaseSettings):
     secret_key: str = "dev_secret_key_change_in_production"
 
     # Database
-    # No password in the default on purpose: a credential committed to source is
-    # a credential that leaks, and every real deployment path already supplies
-    # DATABASE_URL from the environment (docker-compose.yml, the CI job, .env).
-    # This bare fallback only exists so imports work without an environment; it
-    # is expected to fail to connect, which is the loud failure we want.
-    database_url: str = "postgresql://flowstate@localhost:5432/flowstate"
+    # Deliberately no connection-string literal here. Writing one out either
+    # commits a password to source control or advertises a password-less
+    # database, and neither belongs in a repository. Every real deployment path
+    # supplies DATABASE_URL from the environment already -- docker-compose.yml,
+    # the CI job, and .env all set it -- so the parts below exist only to build
+    # a working local URL when it is absent, picking the password up from
+    # POSTGRES_PASSWORD rather than from a default baked in here.
+    database_url: str = ""
+    postgres_user: str = "flowstate"
+    postgres_password: str = ""
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "flowstate"
 
     # Redis
     redis_url: str = "redis://redis:6379/0"
@@ -51,6 +61,21 @@ class Settings(BaseSettings):
 
     # Anthropic — used for mood parsing in arc generation
     anthropic_api_key: str = ""
+
+    @model_validator(mode="after")
+    def _assemble_database_url(self) -> "Settings":
+        """Fall back to a URL built from the POSTGRES_* parts when DATABASE_URL
+        is unset. quote_plus keeps a password containing '@' or '/' from
+        corrupting the URL it is spliced into."""
+        if not self.database_url:
+            credentials = quote_plus(self.postgres_user)
+            if self.postgres_password:
+                credentials += ":" + quote_plus(self.postgres_password)
+            self.database_url = (
+                f"postgresql://{credentials}"
+                f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            )
+        return self
 
     class Config:
         env_file = ".env"
