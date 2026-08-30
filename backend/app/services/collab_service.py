@@ -17,7 +17,7 @@ Usage:
     arc = svc.generate_arc(session.invite_code, host_id, db)
 """
 
-import random
+import secrets
 import string
 from typing import Optional
 
@@ -69,9 +69,18 @@ def _shortest_distances(
 
 
 def _generate_invite_code(length: int = 6) -> str:
-    """Alphanumeric uppercase invite code, e.g. 'AZ3K7Q'."""
+    """
+    Alphanumeric uppercase invite code, e.g. 'AZ3K7Q'.
+
+    The code is the only credential guarding a session: anyone holding it can
+    join and contribute an emotion to someone else's arc, so it has to be
+    unguessable rather than merely unique.  random.choices() is a Mersenne
+    Twister whose internal state can be reconstructed from enough observed
+    output, which would let a caller predict subsequent codes, so this draws
+    from the OS CSPRNG via secrets.choice() instead.
+    """
     chars = string.ascii_uppercase + string.digits
-    return "".join(random.choices(chars, k=length))
+    return "".join(secrets.choice(chars) for _ in range(length))
 
 
 class CollabArcService:

@@ -3,16 +3,16 @@ import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-r
 import Home from './pages/Home'
 import Callback from './pages/Callback'
 import Dashboard from './pages/Dashboard'
+import { readSessionToken, storeSessionToken } from './utils/auth'
 
 function PrivateRoute({ children }) {
-  // Check URL for token first (coming from OAuth redirect)
+  // Check URL for token first (coming from OAuth redirect). The query string is
+  // attacker-controllable, so the value is shape-checked before it is persisted
+  // -- see utils/auth.js.
   const params = new URLSearchParams(window.location.search)
-  const tokenFromUrl = params.get('token')
-  if (tokenFromUrl) {
-    localStorage.setItem('flowstate_token', tokenFromUrl)
-  }
+  storeSessionToken(params.get('token'))
 
-  const token = localStorage.getItem('flowstate_token')
+  const token = readSessionToken()
   return token ? children : <Navigate to="/" replace />
 }
 

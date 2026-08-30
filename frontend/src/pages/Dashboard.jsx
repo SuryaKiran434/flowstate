@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import SpotifyPlayer from '../components/SpotifyPlayer'
 import ArcVisualizer from '../components/ArcVisualizer'
+import { clearSessionToken, readSessionToken, sanitizeSessionToken, storeSessionToken } from '../utils/auth'
 
 // ── Error boundary — shows crash details instead of blank page ────────────────
 class ArcErrorBoundary extends React.Component {
@@ -23,6 +24,37 @@ class ArcErrorBoundary extends React.Component {
 }
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+
+// ── Collab invite codes ───────────────────────────────────────────────────────
+// Invite codes are minted server-side by collab_service._generate_invite_code as
+// exactly six characters drawn from this alphabet. A code reaches us either from
+// the user's keyboard (the "join" field) or out of a fetch response body, so it
+// is untrusted in both directions and must never be dropped into a request path
+// as-is: a value such as "../../admin" would retarget the request at a different
+// endpoint entirely. Percent-encoding is not enough on its own, so the code is
+// validated against the alphabet and then rebuilt from that constant, which
+// means the string we interpolate carries no characters from the raw input.
+const INVITE_CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+const INVITE_CODE_LENGTH = 6
+
+function assertInviteCode(raw) {
+  const input = String(raw ?? '').trim().toUpperCase()
+  if (input.length !== INVITE_CODE_LENGTH) {
+    throw new Error(`Invite codes are ${INVITE_CODE_LENGTH} letters or digits.`)
+  }
+  let safe = ''
+  for (const ch of input) {
+    const i = INVITE_CODE_ALPHABET.indexOf(ch)
+    if (i === -1) throw new Error('Invite codes are letters and digits only.')
+    safe += INVITE_CODE_ALPHABET[i]
+  }
+  return safe
+}
+
+// Single place where a session URL is built, so the check above sits on every path.
+function collabSessionUrl(rawCode, suffix = '') {
+  return `${API}/collab/sessions/${assertInviteCode(rawCode)}${suffix}`
+}
 
 // ── Emotion color map ─────────────────────────────────────────────────────────
 const EMOTION_COLORS = {
@@ -259,7 +291,7 @@ function LandingScreen({ user, stats, readiness, modelStatus, insights, langStat
         {/* Top nav */}
         <div style={s.nav}>
           <span style={s.navBrand}>◈ flowstate</span>
-          <button onClick={() => { localStorage.removeItem('flowstate_token'); window.location.href = '/' }} style={s.logoutBtn}>
+          <button onClick={() => { clearSessionToken(); window.location.href = '/' }} style={s.logoutBtn}>
             Sign out
           </button>
         </div>
@@ -1423,7 +1455,7 @@ function CollabScreen({ onBack, authToken, onArcReady }) {
     if (!inviteCode || !authToken) return
     pollRef.current = setInterval(async () => {
       try {
-        const r = await fetch(`${API}/collab/sessions/${inviteCode}`, { headers: hdrs })
+        const r = await fetch(collabSessionUrl(inviteCode), { headers: hdrs })
         if (r.ok) setSession(await r.json())
       } catch {}
     }, 4000)
@@ -1441,11 +1473,11 @@ function CollabScreen({ onBack, authToken, onArcReady }) {
       const data = await r.json()
       setInviteCode(data.invite_code)
       // Also join with host's own source emotion
-      await fetch(`${API}/collab/sessions/${data.invite_code}/join`, {
+      await fetch(collabSessionUrl(data.invite_code, '/join'), {
         method: 'POST', headers: hdrs,
         body: JSON.stringify({ source_emotion: sourceEmotion }),
       })
-      const s2 = await fetch(`${API}/collab/sessions/${data.invite_code}`, { headers: hdrs })
+      const s2 = await fetch(collabSessionUrl(data.invite_code), { headers: hdrs })
       setSession(await s2.json())
     } catch (e) {
       setError(e.message)
@@ -1456,14 +1488,14 @@ function CollabScreen({ onBack, authToken, onArcReady }) {
     setError(null)
     if (!joinCode.trim()) return
     try {
-      const r = await fetch(`${API}/collab/sessions/${joinCode.trim().toUpperCase()}/join`, {
+      const r = await fetch(collabSessionUrl(joinCode, '/join'), {
         method: 'POST', headers: hdrs,
         body: JSON.stringify({ source_emotion: sourceEmotion }),
       })
       if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Not found') }
-      const s = await fetch(`${API}/collab/sessions/${joinCode.trim().toUpperCase()}`, { headers: hdrs })
+      const s = await fetch(collabSessionUrl(joinCode), { headers: hdrs })
       setSession(await s.json())
-      setInviteCode(joinCode.trim().toUpperCase())
+      setInviteCode(assertInviteCode(joinCode))
       setJoinMsg(`Joined! You're contributing "${sourceEmotion}" to the group arc.`)
     } catch (e) {
       setError(e.message)
@@ -1474,7 +1506,7 @@ function CollabScreen({ onBack, authToken, onArcReady }) {
     setGenerating(true)
     setError(null)
     try {
-      const r = await fetch(`${API}/collab/sessions/${inviteCode}/arc`, {
+      const r = await fetch(collabSessionUrl(inviteCode, '/arc'), {
         method: 'POST', headers: hdrs,
       })
       if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Generation failed') }
@@ -1726,15 +1758,15 @@ export default function Dashboard() {
   const [searchParams]            = useSearchParams()
 
   const token = useCallback(() =>
-    searchParams.get('token') || localStorage.getItem('flowstate_token'), [searchParams])
+    sanitizeSessionToken(searchParams.get('token')) || readSessionToken(), [searchParams])
 
   useEffect(() => {
-    const t = searchParams.get('token')
+    // ?token= comes straight off the URL, so validate before persisting.
+    const t = storeSessionToken(searchParams.get('token'))
     if (t) {
-      localStorage.setItem('flowstate_token', t)
       window.history.replaceState({}, '', '/dashboard')
     }
-    const tok = t || localStorage.getItem('flowstate_token')
+    const tok = t || readSessionToken()
     if (!tok) { navigate('/'); return }
 
     const hdrs = { Authorization: `Bearer ${tok}` }
@@ -1742,7 +1774,7 @@ export default function Dashboard() {
     fetch(`${API}/auth/me`, { headers: hdrs })
       .then(r => { if (!r.ok) throw new Error('Session expired'); return r.json() })
       .then(setUser)
-      .catch(() => { localStorage.removeItem('flowstate_token'); navigate('/') })
+      .catch(() => { clearSessionToken(); navigate('/') })
 
     // Fetch Spotify access token for Web Playback SDK (non-fatal if unavailable)
     fetch(`${API}/auth/spotify-token`, { headers: hdrs })
@@ -1778,7 +1810,7 @@ export default function Dashboard() {
   // Poll readiness every 8s until library is ready
   useEffect(() => {
     if (!readiness || readiness.state === 'ready') return
-    const tok = localStorage.getItem('flowstate_token')
+    const tok = readSessionToken()
     if (!tok) return
     const interval = setInterval(() => {
       fetch(`${API}/tracks/readiness`, { headers: { Authorization: `Bearer ${tok}` } })

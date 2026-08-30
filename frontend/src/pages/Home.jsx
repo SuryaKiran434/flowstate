@@ -1,6 +1,27 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { readSessionToken } from '../utils/auth'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+
+// The login endpoint hands back the Spotify authorize URL it built from
+// settings.spotify_auth_url. We still navigate to it only if it really points at
+// Spotify's authorize host over https: a compromised or misconfigured backend
+// would otherwise get to steer the browser anywhere it liked, which is exactly
+// the phishing hop an OAuth start page must not offer.
+const SPOTIFY_AUTH_ORIGIN = 'https://accounts.spotify.com'
+
+function assertSpotifyAuthUrl(raw) {
+  let parsed
+  try {
+    parsed = new URL(String(raw ?? ''))
+  } catch {
+    throw new Error('Login failed: malformed authorization URL.')
+  }
+  if (parsed.origin !== SPOTIFY_AUTH_ORIGIN || !parsed.pathname.startsWith('/authorize')) {
+    throw new Error('Login failed: unexpected authorization URL.')
+  }
+  return parsed.toString()
+}
 
 // ── Particle Constellation Canvas ────────────────────────────────────────────
 function ConstellationBg() {
@@ -117,7 +138,7 @@ export default function Home() {
 
   useEffect(() => {
     // Check if already logged in
-    const token = localStorage.getItem('flowstate_token')
+    const token = readSessionToken()
     if (token) {
       window.location.href = '/dashboard'
       return
@@ -131,9 +152,11 @@ export default function Home() {
     try {
       const res  = await fetch(`${API}/auth/spotify/login`)
       const data = await res.json()
-      window.location.href = data.auth_url
-    } catch {
-      setError('Failed to connect. Is the backend running?')
+      window.location.assign(assertSpotifyAuthUrl(data.auth_url))
+    } catch (e) {
+      setError(e?.message?.startsWith('Login failed')
+        ? e.message
+        : 'Failed to connect. Is the backend running?')
       setLoading(false)
     }
   }

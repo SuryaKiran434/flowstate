@@ -20,6 +20,7 @@ import numpy as np
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.log_sanitize import scrub_for_log
 from app.services.emotion_classifier import (
     EmotionClassifier,
     _DEFAULT_MODEL_PATH,
@@ -157,10 +158,12 @@ class ReclassifyService:
 
         skipped = max(0, total_tracks - len(feat_rows))
 
+        # user_id arrives from the caller's JWT, so it is request-controlled and
+        # is scrubbed of anything that could forge a second log record.
         log.info(
             "Reclassified %d tracks for user %s (skipped %d without features)",
             len(feat_rows),
-            user_id,
+            scrub_for_log(user_id),
             skipped,
         )
 
