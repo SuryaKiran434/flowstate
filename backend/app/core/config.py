@@ -8,7 +8,12 @@ class Settings(BaseSettings):
     secret_key: str = "dev_secret_key_change_in_production"
 
     # Database
-    database_url: str = "postgresql://flowstate:flowstate_dev@db:5432/flowstate"
+    # No password in the default on purpose: a credential committed to source is
+    # a credential that leaks, and every real deployment path already supplies
+    # DATABASE_URL from the environment (docker-compose.yml, the CI job, .env).
+    # This bare fallback only exists so imports work without an environment; it
+    # is expected to fail to connect, which is the loud failure we want.
+    database_url: str = "postgresql://flowstate@localhost:5432/flowstate"
 
     # Redis
     redis_url: str = "redis://redis:6379/0"

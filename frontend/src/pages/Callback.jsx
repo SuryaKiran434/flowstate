@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { storeSessionToken } from '../utils/auth'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
@@ -23,7 +24,11 @@ export default function Callback() {
     // Case 2: Already have a JWT token (redirect from backend)
     const token = searchParams.get('token')
     if (token) {
-      localStorage.setItem('flowstate_token', token)
+      if (!storeSessionToken(token)) {
+        setStatus('Login failed: malformed session token.')
+        setTimeout(() => navigate('/'), 2000)
+        return
+      }
       setStatus('Logged in! Redirecting...')
       setTimeout(() => navigate('/dashboard'), 500)
       return
