@@ -90,21 +90,16 @@ jobs:
           file: backend/coverage.xml
           flags: backend
 
-      # One scan for the whole monorepo, run from this job because this is where
-      # the coverage report exists. It analyses backend/app AND frontend/src --
-      # both trees are present in the checkout, and neither npm install nor a
-      # build is needed to analyse JSX. Running a second scan from the frontend
-      # job would just overwrite this one: same project key, same commit.
-      #
-      # Configuration lives in sonar-project.properties at the repo root.
-      #
-      # Analysis is advisory, not a gate: continue-on-error keeps a SonarCloud
-      # outage or a scanner hiccup from failing the required check.
-      - name: SonarCloud analysis
-        continue-on-error: true
-        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # Handed to the sonar job below. The scan used to run here, because this
+      # was the only job where a coverage report existed -- which meant the
+      # frontend could never contribute coverage and its whole tree scored 0%.
+      - name: Publish backend coverage for the scan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          if-no-files-found: error
+          retention-days: 1
 
   # ─── Frontend: Lint + Build ─────────────────────────────────────
   frontend:
@@ -147,7 +142,81 @@ jobs:
       - name: Run tests
         run: |
           cd frontend
-          npm run test
+          npm run test:coverage
+
+      # lcov records each file relative to frontend/ ("SF:src/utils/auth.js"),
+      # but SonarCloud resolves those paths against the repository root, where
+      # src/ does not exist. Unresolved paths are a warning in the scanner log,
+      # not an error, so the failure mode is silent: coverage simply never
+      # arrives and the tree scores 0%. Rewrite the prefix once, here, and fail
+      # the job if the rewrite matched nothing.
+      - name: Make coverage paths repo-relative
+        run: |
+          cd frontend
+          sed -i 's|^SF:src/|SF:frontend/src/|' coverage/lcov.info
+          grep -q '^SF:frontend/src/' coverage/lcov.info
+          ! grep -q '^SF:src/' coverage/lcov.info
+
+      - name: Publish frontend coverage for the scan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 1
+
+  # ─── SonarCloud: one scan for the whole monorepo ─────────────────
+  #
+  # A job of its own, downstream of both test jobs, because the scan needs
+  # something each of them produces. It previously lived inside the backend job,
+  # which is where backend/coverage.xml is written -- but frontend/coverage was
+  # in a different workspace and so never reached the scanner. Sonar scores a
+  # source file it analyses but cannot find in any coverage report as 0%
+  # covered rather than as unmeasured, so the whole of frontend/src counted as
+  # uncovered and no frontend test could ever change that number.
+  #
+  # Still one scan, not two: both trees publish to the same project key, so a
+  # second scan would simply overwrite the first.
+  sonar:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    # Analysis is advisory, not a gate: a SonarCloud outage or a scanner hiccup
+    # must not fail a required check.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # SonarCloud needs the full history to attribute code to authors and
+          # to decide which lines are new.
+          fetch-depth: 0
+
+      - name: Download backend coverage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: backend-coverage
+          path: backend
+
+      - name: Download frontend coverage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: frontend-coverage
+          path: frontend/coverage
+
+      # A missing report is not a neutral outcome -- it silently zeroes a whole
+      # tree's coverage and fails the gate on a number no test could move. Fail
+      # loudly here instead, where the run log names the file.
+      - name: Verify both reports arrived
+        run: |
+          test -s backend/coverage.xml
+          test -s frontend/coverage/lcov.info
+
+      # Configuration lives in sonar-project.properties at the repo root.
+      - name: SonarCloud analysis
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # ─── Docker: Build check ────────────────────────────────────────
   docker:
