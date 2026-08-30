@@ -8,7 +8,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=white)](https://reactjs.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%20(pgvector)-336791?style=flat&logo=postgresql&logoColor=white)](https://postgresql.org)
-[![Tests](https://img.shields.io/badge/tests-509%20passing-brightgreen)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-568%20passing-brightgreen)](backend/tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -160,7 +160,7 @@ flowstate/
 │   │       └── spotify_client.py         # Spotify API wrapper
 │   ├── scripts/train_classifier.py  # Trains + saves the model, logs to MLflow
 │   ├── models/                      # Trained artefacts (gitignored, .gitkeep only)
-│   ├── tests/unit/                  # 18 test files — see Test Suite below
+│   ├── tests/unit/                  # 20 test files — see Test Suite below
 │   ├── pytest.ini
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -188,7 +188,7 @@ flowstate/
 │   └── Dockerfile
 │
 ├── .github/
-│   ├── workflows/ci.yml             # Backend (Python) · Frontend (React) · Docker Build
+│   ├── workflows/ci.yml             # Backend · Frontend · SonarCloud · Docker Build
 │   ├── dependabot.yml               # Weekly pip / npm / docker / actions updates
 │   └── CODEOWNERS
 │
@@ -509,7 +509,7 @@ Then click **Reclassify library** in the dashboard — or `POST /api/v1/tracks/r
 ### 6. Run the tests
 
 ```bash
-# Backend — 510 tests
+# Backend — 568 tests
 cd backend && python3 -m pytest              # or: python3 -m pytest tests/unit -v
 
 # Backend lint, exactly as CI runs it (ruff is pinned to 0.15.8 in
@@ -518,7 +518,7 @@ cd backend && python3 -m pytest              # or: python3 -m pytest tests/unit 
 ruff check app/ && ruff format --check app/
 
 # Frontend
-cd frontend && npm run lint && npm run build && npm run test
+cd frontend && npm run lint && npm run build && npm run test:coverage
 ```
 
 The backend suite needs no database or Redis — every DB and network interaction is stubbed. CI additionally provisions Postgres and Redis services and runs `pytest tests/unit -v --cov=app`.
@@ -543,7 +543,7 @@ The backend suite needs no database or Redis — every DB and network interactio
 cd backend && python3 -m pytest
 ```
 
-510 tests across 18 test files, **all passing** on Python 3.11 (the version CI and `backend/Dockerfile` use). Coverage spans every service, endpoint function, and integration path.
+568 tests across 20 test files, **all passing** on Python 3.11 (the version CI and `backend/Dockerfile` use). Coverage spans every service, endpoint function, and integration path.
 
 The failure in `test_graph_learner.py::TestUserGraphEndpoint::test_generate_arc_includes_personalised_flag` noted in earlier revisions of this file was environment-specific: the test drove its own loop via the deprecated `asyncio.get_event_loop().run_until_complete(...)`, which behaves differently on newer Python versions than on 3.11. It is now a plain `async def` handled by pytest-asyncio, so it no longer depends on that.
 
@@ -567,20 +567,47 @@ The failure in `test_graph_learner.py::TestUserGraphEndpoint::test_generate_arc_
 | `test_longitudinal_analyzer.py` | Streak, top emotions, time-slot patterns |
 | `test_collab_service.py` | Session creation, join, centroid aggregation |
 | `test_language_detector.py` | Unicode script detection, batch, endpoint |
+| `test_log_sanitize.py` | Control-character stripping, truncation boundary, non-string input |
+| `test_config_database_url.py` | DSN fallback assembly, password escaping (`@`, `/`, `:`, `#`) |
 
-The frontend has no test files yet; `npm run test` runs Vitest with `--passWithNoTests` so CI stays green.
+The frontend has one suite — 34 tests in `frontend/src/utils/__tests__/auth.test.js`, covering the
+session-token guard. That token arrives as a `?token=` query parameter and ends up in an
+`Authorization` header, so its rejection cases (CRLF injection, base64 padding, wrong segment count,
+the 4096-character cap) are pinned individually. `auth.js` sits at 100%.
+
+```bash
+cd frontend && npm run test            # or npm run test:coverage for lcov
+```
+
+The rest of `frontend/src` has no test harness yet — the pages and the two visualiser/player
+components need a DOM environment and a mocked Spotify SDK before they can be rendered. Those paths
+are listed in `sonar.coverage.exclusions` so they are still analysed for bugs, smells, security and
+duplication, but do not score coverage they have no way to produce. Each entry is meant to be deleted
+as the file behind it gets tests.
 
 ---
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push and PR to `main` / `develop`. `main` requires all three checks to pass before a merge:
+`.github/workflows/ci.yml` runs on every push and PR to `main` / `develop`. `main` requires the three
+blocking checks below to pass before a merge; SonarCloud is advisory and runs `continue-on-error`, so
+an outage there never blocks a merge.
 
-| Check | Does |
-|---|---|
-| **Backend (Python)** | `ruff check` + `ruff format --check` on `app/`, then `pytest tests/unit` with Postgres + Redis services, uploads coverage |
-| **Frontend (React)** | `npm ci`, ESLint, typecheck stub, `vite build`, `vitest run` |
-| **Docker Build** | Builds `./backend` and `./frontend` images (runs after the two above) |
+| Check | Does | Required |
+|---|---|---|
+| **Backend (Python)** | `ruff check` + `ruff format --check` on `app/`, then `pytest tests/unit` with Postgres + Redis services, publishes `coverage.xml` | yes |
+| **Frontend (React)** | `npm ci`, ESLint, typecheck stub, `vite build`, `vitest run --coverage`, publishes `lcov.info` | yes |
+| **Docker Build** | Builds `./backend` and `./frontend` images | yes |
+| **SonarCloud** | Downloads both coverage reports and runs one scan over both trees | no |
+
+SonarCloud is a job of its own rather than a step inside the backend job, and the reason is worth
+knowing before anyone moves it back: Sonar scores a source file it analyses but cannot find in any
+coverage report as **0% covered**, not as unmeasured. With the scan inside the backend job the
+frontend's lcov was in a different workspace, so all of `frontend/src` counted as uncovered and no
+frontend test could change that number. Both test jobs now publish their report as an artifact and
+the scan job consumes both. It also rewrites the lcov path prefix — vitest records files relative to
+`frontend/`, Sonar resolves them from the repository root — and fails if either report is missing,
+because an absent report is silently scored as zero rather than skipped.
 
 Dependency updates are proposed weekly by Dependabot (`.github/dependabot.yml`) for pip, npm, Docker base images, and GitHub Actions, capped at 5 open PRs per ecosystem.
 
@@ -613,10 +640,10 @@ Dependency updates are proposed weekly by Dependabot (`.github/dependabot.yml`) 
 | Database | PostgreSQL 15 (`pgvector/pgvector:pg15`) |
 | Cache / state | Redis 7 (`redis` 5.0.1 client) |
 | Pipeline | Apache Airflow 2.8.0 (python3.11 image) |
-| Frontend | React 18, D3.js v7, Vite 5, react-router-dom 6, axios |
+| Frontend | React 18, D3.js v7, Vite 6, react-router-dom 7, axios |
 | Playback | Spotify Web Playback SDK |
 | Auth | Spotify OAuth2 PKCE, JWT (python-jose) |
-| Lint / test | ruff 0.15.8, pytest 7.4.3, ESLint 8, Vitest 1 |
+| Lint / test | ruff 0.15.8, pytest 8.4.2, ESLint 8, Vitest 3 |
 | Infra | Docker, Docker Compose |
 
 ---
