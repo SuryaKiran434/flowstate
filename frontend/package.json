@@ -7,8 +7,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src/ --ext .js,.jsx",
-    "typecheck": "echo 'No TypeScript — skipping typecheck'",
-    "test": "vitest run --passWithNoTests"
+    "typecheck": "echo 'No TypeScript \u2014 skipping typecheck'",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "axios": "^1.16.0",
@@ -21,6 +22,7 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^8.54.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
