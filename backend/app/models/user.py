@@ -1,6 +1,8 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, func
+
+from sqlalchemy import Column, DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
+
 from app.db.session import Base
 
 

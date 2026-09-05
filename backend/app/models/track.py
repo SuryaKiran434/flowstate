@@ -13,8 +13,10 @@ Audio feature source: yt-dlp (YouTube) → librosa
 """
 
 import uuid
-from sqlalchemy import Column, String, Float, Integer, DateTime, ForeignKey, func, Text
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+
 from app.db.session import Base
 
 

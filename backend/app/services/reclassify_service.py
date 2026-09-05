@@ -14,7 +14,6 @@ serving stale predictions if the model is retrained between calls.
 """
 
 import logging
-from typing import Optional
 
 import numpy as np
 from sqlalchemy import text
@@ -22,8 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.core.log_sanitize import scrub_for_log
 from app.services.emotion_classifier import (
-    EmotionClassifier,
     _DEFAULT_MODEL_PATH,
+    EmotionClassifier,
 )
 
 log = logging.getLogger(__name__)
@@ -53,7 +52,7 @@ class ReclassifyService:
         self,
         user_id: str,
         db: Session,
-        model_path: Optional[str] = None,
+        model_path: str | None = None,
     ) -> dict:
         """
         Load the trained model and apply it to all tracks in the user's library

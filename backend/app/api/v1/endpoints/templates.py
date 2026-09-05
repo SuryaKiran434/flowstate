@@ -11,7 +11,6 @@ POST /api/v1/templates/{id}/remix    — generate a new arc using the template's
                                        fixed emotional path + requesting user's tracks
 """
 
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -40,7 +39,7 @@ class PublishRequest(BaseModel):
     """Publish the current arc as a shareable template."""
 
     display_name: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = Field(None, max_length=500)
+    description: str | None = Field(None, max_length=500)
     source_emotion: str
     target_emotion: str
     arc_path: list[str] = Field(..., min_length=1)
@@ -50,7 +49,7 @@ class PublishRequest(BaseModel):
 class RemixRequest(BaseModel):
     """Remix a template against the requesting user's library."""
 
-    duration_mins: Optional[int] = Field(
+    duration_mins: int | None = Field(
         None, ge=5, le=180, description="Override duration (default: template's)"
     )
 
@@ -133,9 +132,9 @@ def publish_template(
 def list_templates(
     limit: int = Query(default=20, ge=1, le=_MAX_PAGE),
     offset: int = Query(default=0, ge=0),
-    source: Optional[str] = Query(default=None, description="Filter by source emotion"),
-    target: Optional[str] = Query(default=None, description="Filter by target emotion"),
-    user_id: str = Depends(get_current_user_id),  # noqa: ARG001 — auth gate only
+    source: str | None = Query(default=None, description="Filter by source emotion"),
+    target: str | None = Query(default=None, description="Filter by target emotion"),
+    user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
     """
@@ -174,7 +173,7 @@ def list_templates(
 @router.get("/{template_id}")
 def get_template(
     template_id: UUID,
-    user_id: str = Depends(get_current_user_id),  # noqa: ARG001
+    user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
     """Return a single template by ID."""

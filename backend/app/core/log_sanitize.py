@@ -19,7 +19,7 @@ __all__ = ["scrub_for_log"]
 
 # Everything below 0x20 plus DEL. Covers CR, LF, NUL, ESC and the rest of the
 # C0 range -- the characters that end a record or steer a terminal.
-_CONTROL_CHARS = {c: None for c in list(range(0x00, 0x20)) + [0x7F]}
+_CONTROL_CHARS = {c: None for c in list(range(0x20)) + [0x7F]}
 
 _MAX_LENGTH = 256
 _TRUNCATION_MARKER = "...[truncated]"

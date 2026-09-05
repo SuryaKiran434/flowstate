@@ -6,7 +6,7 @@ from app.db.session import Base, engine
 
 # Import all ORM models so SQLAlchemy registers them with Base.metadata
 # before create_all resolves foreign keys across tables.
-from app.models import user, track, session, arc_template, collab  # noqa: F401
+from app.models import arc_template, collab, session, track, user  # noqa: F401
 
 # Create all tables on startup
 Base.metadata.create_all(bind=engine)

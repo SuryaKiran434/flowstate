@@ -1,5 +1,6 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, tracks, arc, sessions, templates, collab
+
+from app.api.v1.endpoints import arc, auth, collab, sessions, templates, tracks
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)

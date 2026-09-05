@@ -16,9 +16,9 @@ from app.db.session import get_db
 from app.services.collab_service import (
     CollabArcService,
     CollabError,
-    SessionNotFoundError,
     NotHostError,
     SessionClosedError,
+    SessionNotFoundError,
 )
 
 router = APIRouter(prefix="/collab", tags=["collab"])
@@ -109,7 +109,7 @@ def join_session(
 @router.get("/sessions/{invite_code}")
 def get_session(
     invite_code: str,
-    user_id: str = Depends(get_current_user_id),  # noqa: ARG001 — auth guard
+    user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
     """Return session metadata and all participants with their source emotions."""
