@@ -11,6 +11,8 @@ nightly Airflow DAG (yt-dlp + librosa pipeline).
 Reuses the same ON CONFLICT upsert pattern as the Airflow DAG for consistency.
 """
 
+import logging
+
 from sqlalchemy import text
 
 from app.services.spotify_client import (
@@ -18,6 +20,8 @@ from app.services.spotify_client import (
     get_top_tracks,
     get_user_playlists,
 )
+
+log = logging.getLogger(__name__)
 
 
 async def seed_user_library(user_id: str, access_token: str, db) -> int:
@@ -92,10 +96,17 @@ async def seed_user_library(user_id: str, access_token: str, db) -> int:
                 tracks = await get_playlist_tracks(access_token, pl["id"])
                 for t in tracks:
                     _save_track(t)
+            # One unreadable playlist (deleted, region-locked, permissions
+            # revoked mid-walk) must not abort the rest of the seed, so the
+            # catch stays broad — but it is logged rather than swallowed.
             except Exception:
-                pass  # skip inaccessible playlists
+                log.exception(
+                    "seeder: skipping playlist %s for user %s", pl["id"], user_id
+                )
+    # Deliberate resilience boundary: if the Spotify playlist API is down the
+    # user still gets whatever top tracks we can fetch below.
     except Exception:
-        pass  # graceful degradation if Spotify API fails
+        log.exception("seeder: playlist source failed for user %s", user_id)
 
     # ── Source 2: Top tracks (3 time ranges) ─────────────────────────────────
     for time_range in ("short_term", "medium_term", "long_term"):
@@ -103,8 +114,12 @@ async def seed_user_library(user_id: str, access_token: str, db) -> int:
             tracks = await get_top_tracks(access_token, time_range=time_range)
             for t in tracks:
                 _save_track(t)
+        # Each time range is independent; a failure on one still leaves the
+        # other two worth seeding, so the catch stays broad and is logged.
         except Exception:
-            pass
+            log.exception(
+                "seeder: top-tracks %s failed for user %s", time_range, user_id
+            )
 
     db.commit()
     return total_saved
@@ -121,7 +136,9 @@ async def seed_user_library_background(user_id: str, access_token: str) -> None:
     try:
         count = await seed_user_library(user_id, access_token, db)
         print(f"[seeder] Seeded {count} tracks for user {user_id}")
-    except Exception as exc:
-        print(f"[seeder] Background seed failed for user {user_id}: {exc}")
+    # Outermost boundary of a fire-and-forget background task: nothing above
+    # this frame can handle an error, so catch broadly and log with traceback.
+    except Exception:
+        log.exception("seeder: background seed failed for user %s", user_id)
     finally:
         db.close()
