@@ -19,8 +19,6 @@ import random
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Optional
-
 
 # ─── Emotion Graph ────────────────────────────────────────────────────────────
 
@@ -136,7 +134,7 @@ def _all_pairs_shortest_paths(signature: tuple):
     inf = float("inf")
 
     dist: list[list[float]] = [[inf] * n for _ in range(n)]
-    nxt: list[list[Optional[int]]] = [[None] * n for _ in range(n)]
+    nxt: list[list[int | None]] = [[None] * n for _ in range(n)]
     for i in range(n):
         dist[i][i] = 0.0
         nxt[i][i] = i
@@ -195,7 +193,7 @@ class ArcPlanner:
                                    user_id="uuid-string")
     """
 
-    def __init__(self, graph: dict[str, dict[str, float]] = None):
+    def __init__(self, graph: dict[str, dict[str, float]] | None = None):
         self.graph = graph or EMOTION_GRAPH
 
     # ── DB integration ────────────────────────────────────────────────────────
@@ -204,7 +202,7 @@ class ArcPlanner:
         self,
         db,
         user_id: str,
-        excluded_spotify_ids: Optional[set] = None,
+        excluded_spotify_ids: set | None = None,
     ) -> list[TrackCandidate]:
         """
         Load all classified tracks for a user from the DB in one query.
@@ -213,6 +211,7 @@ class ArcPlanner:
         Unicode script detection (no DB column required).
         """
         from sqlalchemy import text
+
         from app.services.language_detector import detect as detect_language
 
         rows = db.execute(
@@ -276,9 +275,9 @@ class ArcPlanner:
         duration_minutes: int,
         db,
         user_id: str,
-        excluded_spotify_ids: Optional[set] = None,
-        fixed_arc_path: Optional[list[str]] = None,
-        language_filter: Optional[list[str]] = None,
+        excluded_spotify_ids: set | None = None,
+        fixed_arc_path: list[str] | None = None,
+        language_filter: list[str] | None = None,
     ) -> dict:
         """
         Production entry point. Loads track pool from DB then plans the arc.
@@ -453,8 +452,8 @@ class ArcPlanner:
         track_pool: list[TrackCandidate],
         n_tracks: int,
         energy_direction: str = "neutral",
-        used_track_ids: Optional[set] = None,
-        buckets: Optional[dict[str, list[TrackCandidate]]] = None,
+        used_track_ids: set | None = None,
+        buckets: dict[str, list[TrackCandidate]] | None = None,
     ) -> list[TrackCandidate]:
         """
         `buckets` is `track_pool` pre-indexed by emotion_label. plan() builds it
@@ -521,7 +520,7 @@ class ArcPlanner:
         target: str,
         duration_minutes: int,
         track_pool: list[TrackCandidate],
-        fixed_arc_path: Optional[list[str]] = None,
+        fixed_arc_path: list[str] | None = None,
     ) -> dict:
         """
         Main entry point. Returns a structured arc.
