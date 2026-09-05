@@ -75,7 +75,7 @@
 └─────────────────────────────────┬─────────────────────────────────────────┘
                                   │
 ┌─────────────────────────────────▼─────────────────────────────────────────┐
-│              AIRFLOW 2.8.0 PIPELINE  (:8080 · daily 02:00 UTC)            │
+│             AIRFLOW 2.11.2 PIPELINE  (:8080 · daily 02:00 UTC)            │
 │  feature_enrichment DAG:                                                  │
 │     Spotify library → yt-dlp → librosa → track_features → classifier      │
 │  backfill_empty_tracks.py: standalone metadata repair script              │
@@ -138,6 +138,7 @@ flowstate/
 │   │   │       └── collab.py        # Collaborative arc sessions
 │   │   ├── core/
 │   │   │   ├── config.py            # Pydantic Settings (Spotify, DB, Claude, Redis)
+│   │   │   ├── log_sanitize.py      # Control-character stripping + truncation for logs
 │   │   │   └── security.py          # JWT + PKCE helpers
 │   │   ├── db/session.py            # Engine, SessionLocal, declarative Base
 │   │   ├── models/
@@ -169,7 +170,7 @@ flowstate/
 │   ├── dags/
 │   │   ├── feature_enrichment_dag.py    # Spotify → yt-dlp → librosa → DB (daily)
 │   │   └── backfill_empty_tracks.py     # Backfill missing metadata from Spotify
-│   └── Dockerfile                       # airflow:2.8.0 + ffmpeg/librosa/yt-dlp
+│   └── Dockerfile                       # airflow:2.11.2 + ffmpeg/librosa/yt-dlp
 │
 ├── frontend/
 │   ├── src/
@@ -188,9 +189,12 @@ flowstate/
 │   └── Dockerfile
 │
 ├── .github/
-│   ├── workflows/ci.yml             # Backend · Frontend · SonarCloud · Docker Build
-│   ├── dependabot.yml               # Weekly pip / npm / docker / actions updates
-│   └── CODEOWNERS
+│   ├── workflows/
+│   │   ├── ci.yml                   # Backend · Frontend · SonarCloud · Docker Build
+│   │   ├── dependabot-auto-merge.yml  # Queues grouped minor/patch bumps to merge
+│   │   └── slack-notify.yml         # Push notification to a Slack webhook
+│   ├── dependabot.yml               # Weekly grouped pip / npm / docker / actions
+│   └── ISSUE_TEMPLATE/              # Bug report + feature request forms
 │
 ├── docker/
 │   └── postgres/initdb/
@@ -202,6 +206,7 @@ flowstate/
 │   └── AUDIO_PIPELINE.md
 │
 ├── LIMITATIONS.md                   # Constraints + market gaps analysis
+├── sonar-project.properties         # SonarCloud sources, coverage report paths
 ├── docker-compose.yml               # 6-service stack (db, redis, backend,
 │                                    #   frontend, airflow, mlflow)
 ├── .env.example
@@ -609,7 +614,16 @@ the scan job consumes both. It also rewrites the lcov path prefix — vitest rec
 `frontend/`, Sonar resolves them from the repository root — and fails if either report is missing,
 because an absent report is silently scored as zero rather than skipped.
 
-Dependency updates are proposed weekly by Dependabot (`.github/dependabot.yml`) for pip, npm, Docker base images, and GitHub Actions, capped at 5 open PRs per ecosystem.
+Dependency updates are proposed weekly by Dependabot (`.github/dependabot.yml`) for pip, npm, Docker
+base images, and GitHub Actions, capped at 5 open PRs per ecosystem. Each ecosystem is **grouped**
+into one PR per week rather than one PR per dependency, and majors are kept out of the groups so a
+batch can never carry a breaking change. `.github/workflows/dependabot-auto-merge.yml` keys on that
+split: a grouped PR queues itself to merge once the required checks pass, while a major waits for a
+human. The docker groups are **patch-only** on purpose — a base image tag's "major" is the product
+major, so `python:3.11-slim` → `3.14-slim` reads to Dependabot as a minor while being a whole runtime
+jump. Docker minors therefore arrive as their own PR and are held back from auto-merge.
+
+`.github/workflows/slack-notify.yml` posts a push notification to a Slack webhook on every branch.
 
 ---
 
@@ -634,16 +648,16 @@ Dependency updates are proposed weekly by Dependabot (`.github/dependabot.yml`) 
 | Layer | Technology |
 |---|---|
 | Audio pipeline | yt-dlp, librosa 0.10.1, ffmpeg |
-| ML | scikit-learn 1.3.2, MLflow, joblib |
+| ML | scikit-learn 1.9.0, MLflow, joblib |
 | Mood parsing | Anthropic Claude API (claude-haiku-4-5) |
 | Backend | FastAPI 0.104.1, SQLAlchemy 2.0.23, Pydantic v2 (2.5.2), uvicorn 0.24.0 |
 | Database | PostgreSQL 15 (`pgvector/pgvector:pg15`) |
 | Cache / state | Redis 7 (`redis` 5.0.1 client) |
-| Pipeline | Apache Airflow 2.8.0 (python3.11 image) |
+| Pipeline | Apache Airflow 2.11.2 (`apache/airflow:2.11.2-python3.11`) |
 | Frontend | React 18, D3.js v7, Vite 6, react-router-dom 7, axios |
 | Playback | Spotify Web Playback SDK |
 | Auth | Spotify OAuth2 PKCE, JWT (python-jose) |
-| Lint / test | ruff 0.15.8, pytest 8.4.2, ESLint 8, Vitest 3 |
+| Lint / test | ruff 0.15.8, pytest 9.1.1, ESLint 8, Vitest 3 |
 | Infra | Docker, Docker Compose |
 
 ---
