@@ -77,8 +77,11 @@ class LongitudinalAnalyzer:
             top_arcs = self._top_arcs(user_id, db)
             slot_patterns = self._time_slot_patterns(user_id, db)
             recent = self._recent_arcs(user_id, db)
-        except Exception as exc:
-            log.warning("LongitudinalAnalyzer.get_insights failed: %s", exc)
+        except Exception:
+            # Deliberate resilience boundary: the insights panel must never take
+            # the endpoint down (missing table, migration in flight, bad row).
+            # Log with the traceback so the failure is never silent.
+            log.exception("LongitudinalAnalyzer.get_insights failed")
             return _empty_insights()
 
         total = stats["total"]
@@ -112,6 +115,12 @@ class LongitudinalAnalyzer:
                 return entry
             return None
         except Exception:
+            # Same resilience boundary as get_insights: ContextSeeder falls back
+            # to a non-personalised suggestion rather than failing the request.
+            log.exception(
+                "LongitudinalAnalyzer.get_time_slot_pattern failed for slot %r",
+                time_label,
+            )
             return None
 
     # ── DB queries ─────────────────────────────────────────────────────────────
@@ -158,7 +167,7 @@ class LongitudinalAnalyzer:
             return 0
 
         dates = [r.session_date for r in rows]
-        today = datetime.date.today()
+        today = datetime.datetime.now(datetime.timezone.utc).date()
         streak = 0
         expected = today
 
