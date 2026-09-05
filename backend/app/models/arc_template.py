@@ -6,8 +6,10 @@ duration) that any user can remix against their own track library.
 """
 
 import uuid
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, func, Text
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
+
 from app.db.session import Base
 
 

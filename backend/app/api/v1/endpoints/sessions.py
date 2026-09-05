@@ -8,8 +8,8 @@ PATCH /api/v1/sessions/{session_id}     → update status (active/completed/aban
 POST  /api/v1/sessions/{session_id}/events → record a track play or skip event
 """
 
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -29,8 +29,8 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 class TrackIn(BaseModel):
     track_id: str
     position: int
-    emotion_label: Optional[str] = None
-    arc_segment: Optional[int] = None
+    emotion_label: str | None = None
+    arc_segment: int | None = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -82,8 +82,8 @@ def _get_session_or_404(session_id: UUID, user_id: str, db: DbSession) -> Sessio
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_session(
     body: CreateSessionRequest,
-    user_id: str = Depends(get_current_user_id),
-    db: DbSession = Depends(get_db),
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Annotated[DbSession, Depends(get_db)],
 ):
     """
     Create a new session when the frontend generates an arc.
@@ -120,8 +120,8 @@ async def create_session(
 async def update_session_status(
     session_id: UUID,
     body: PatchSessionRequest,
-    user_id: str = Depends(get_current_user_id),
-    db: DbSession = Depends(get_db),
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Annotated[DbSession, Depends(get_db)],
 ):
     """
     Transition session status.
@@ -136,7 +136,7 @@ async def update_session_status(
             detail=f"Cannot transition from '{session.status}' to '{body.status}'",
         )
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     session.status = body.status
     if body.status == "active":
         session.started_at = now
@@ -151,8 +151,8 @@ async def update_session_status(
 async def record_track_event(
     session_id: UUID,
     body: TrackEventRequest,
-    user_id: str = Depends(get_current_user_id),
-    db: DbSession = Depends(get_db),
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Annotated[DbSession, Depends(get_db)],
 ):
     """
     Record a play, skip, or complete event for a track in this session.
@@ -175,7 +175,7 @@ async def record_track_event(
             detail=f"No track at position {body.position} in this session",
         )
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if body.event == "play":
         track.played = True
         if not track.played_at:

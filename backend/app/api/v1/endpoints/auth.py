@@ -9,9 +9,12 @@ GET  /api/v1/auth/me                → returns current user profile
 GET  /api/v1/auth/spotify-token     → returns Spotify access token (auto-refreshes)
 """
 
+import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
+import httpx
 import redis as redis_lib
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
@@ -34,6 +37,7 @@ from app.services.spotify_client import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Redis-backed PKCE verifier store — keyed by state UUID, expires after 10 minutes.
 # Replaces the previous in-memory dict which leaked on abandoned logins and
@@ -65,9 +69,9 @@ async def spotify_login():
 
 @router.get("/spotify/callback")
 async def spotify_callback(
-    code: str = Query(...),
-    state: str = Query(...),
-    db: Session = Depends(get_db),
+    code: Annotated[str, Query()],
+    state: Annotated[str, Query()],
+    db: Annotated[Session, Depends(get_db)],
     background_tasks: BackgroundTasks = None,
 ):
     """
@@ -92,11 +96,16 @@ async def spotify_callback(
             code=code,
             code_verifier=code_verifier,
         )
-    except Exception as e:
+    except (httpx.HTTPError, ValueError) as e:
+        # httpx.HTTPError covers transport failures and raise_for_status();
+        # ValueError covers a non-JSON body from response.json(). Anything else
+        # is a bug in our own code and must surface rather than masquerade as a
+        # client-side 400.
+        logger.warning("spotify token exchange failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to exchange code for tokens: {str(e)}",
-        )
+            detail=f"Failed to exchange code for tokens: {e!s}",
+        ) from e
 
     access_token = token_data["access_token"]
     refresh_token = token_data.get("refresh_token")
@@ -105,11 +114,14 @@ async def spotify_callback(
     # Fetch Spotify user profile
     try:
         profile = await get_spotify_user_profile(access_token)
-    except Exception as e:
+    except (httpx.HTTPError, ValueError) as e:
+        # Same boundary as the token exchange above: transport/HTTP status
+        # errors and malformed JSON are the caller-visible failures here.
+        logger.warning("spotify profile fetch failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to fetch Spotify profile: {str(e)}",
-        )
+            detail=f"Failed to fetch Spotify profile: {e!s}",
+        ) from e
 
     spotify_id = profile["id"]
     display_name = profile.get("display_name", "")
@@ -161,8 +173,8 @@ async def spotify_callback(
 
 @router.get("/spotify-token")
 async def get_spotify_token(
-    user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Annotated[Session, Depends(get_db)],
 ):
     """
     Returns the user's current Spotify access token.
@@ -176,10 +188,18 @@ async def get_spotify_token(
             detail="User not found",
         )
 
-    now = datetime.utcnow()
-    expires_at = (
-        user.token_expires_at.replace(tzinfo=None) if user.token_expires_at else now
-    )
+    now = datetime.now(timezone.utc)
+    # token_expires_at is DateTime(timezone=True), so Postgres returns an aware
+    # value while spotify_client.token_expires_at() produces a naive UTC one.
+    # Normalise both shapes to aware UTC — the comparison below must never mix
+    # naive and aware operands, and a naive stored value is always UTC.
+    stored_expiry = user.token_expires_at
+    if stored_expiry is None:
+        expires_at = now
+    elif stored_expiry.tzinfo is None:
+        expires_at = stored_expiry.replace(tzinfo=timezone.utc)
+    else:
+        expires_at = stored_expiry.astimezone(timezone.utc)
     needs_refresh = expires_at < now + timedelta(minutes=5)
 
     if needs_refresh and user.refresh_token:
@@ -191,6 +211,10 @@ async def get_spotify_token(
             user.token_expires_at = token_expires_at(token_data.get("expires_in", 3600))
             db.commit()
         except Exception:
+            # Deliberately broad: refresh can fail for any reason and this
+            # endpoint must degrade, never 500. Logged with the traceback so
+            # the cause is not swallowed.
+            logger.exception("spotify token refresh failed for user %s", user_id)
             # Refresh failed (revoked token, network issue, Spotify outage).
             # Serving the cached token would cause silent playback failures in
             # the Web Playback SDK. Tell the frontend so it can re-auth.
@@ -210,8 +234,8 @@ async def get_spotify_token(
 
 @router.get("/me")
 async def get_me(
-    user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Annotated[Session, Depends(get_db)],
 ):
     """
     Returns the currently authenticated user's profile.

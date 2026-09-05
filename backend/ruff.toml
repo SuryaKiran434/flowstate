@@ -1,0 +1,29 @@
+# Ruff configuration for the flowstate backend.
+#
+# Why this file exists at all: there was no ruff config, so the lint surface was
+# whatever ruff's defaults happened to be that week. ruff 0.16 widened those
+# defaults, and the same unchanged code went from "All checks passed" under
+# 0.15.8 to 112 findings under 0.16.5 -- which blocked a routine dependency
+# batch. The findings were adopted and fixed rather than suppressed; this file
+# records the one class among them that was not a real defect.
+#
+# B008 flags a function call used as an argument default. In FastAPI that IS the
+# dependency-injection idiom -- `db: Session = Depends(get_db)` -- and every one
+# of the 29 hits was Depends (28) or Security (1). "Fixing" them would mean
+# abandoning idiomatic FastAPI across every endpoint. Declaring those calls
+# immutable is ruff's own documented mechanism for FastAPI projects, not a
+# blanket suppression: B008 stays enabled and still fires on any other call in
+# an argument default, which is the case the rule is actually for.
+
+[lint.flake8-bugbear]
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.Security",
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Body",
+  "fastapi.Header",
+  "fastapi.Cookie",
+  "fastapi.File",
+  "fastapi.Form",
+]

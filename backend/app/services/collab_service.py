@@ -19,12 +19,11 @@ Usage:
 
 import secrets
 import string
-from typing import Optional
 
-from app.models.collab import CollabSession, CollabParticipant
+from app.models.collab import CollabParticipant, CollabSession
 from app.services.arc_planner import (
-    ArcPlanner,
     EMOTION_GRAPH,
+    ArcPlanner,
     all_pairs_shortest_paths,
 )
 from app.services.mood_parser import VALID_EMOTIONS
@@ -86,7 +85,7 @@ def _generate_invite_code(length: int = 6) -> str:
 class CollabArcService:
     """Multi-user collaborative arc session manager."""
 
-    def __init__(self, planner: Optional[ArcPlanner] = None):
+    def __init__(self, planner: ArcPlanner | None = None):
         self._planner = planner or ArcPlanner()
 
     # ── Session lifecycle ──────────────────────────────────────────────────────

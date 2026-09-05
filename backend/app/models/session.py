@@ -7,18 +7,20 @@ Two tables:
 """
 
 import uuid
+
 from sqlalchemy import (
-    Column,
-    String,
-    Integer,
+    ARRAY,
     Boolean,
+    Column,
     DateTime,
     ForeignKey,
-    func,
-    ARRAY,
+    Integer,
+    String,
     Text,
+    func,
 )
 from sqlalchemy.dialects.postgresql import UUID
+
 from app.db.session import Base
 
 

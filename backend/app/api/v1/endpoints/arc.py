@@ -10,7 +10,6 @@ GET  /api/v1/arc/preview    — fast path-only preview (no tracks)
 GET  /api/v1/arc/emotions   — valid emotion labels + metadata
 """
 
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,12 +18,13 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user_id
 from app.db.session import get_db
-from app.models.session import Session as SessionModel, SessionTrack
-from app.services.arc_planner import ArcPlanner, EMOTION_GRAPH, ENERGY_CENTERS
+from app.models.session import Session as SessionModel
+from app.models.session import SessionTrack
+from app.services.arc_planner import EMOTION_GRAPH, ENERGY_CENTERS, ArcPlanner
 from app.services.context_seeder import ContextSeeder
 from app.services.graph_learner import GraphLearner
 from app.services.longitudinal_analyzer import LongitudinalAnalyzer
-from app.services.mood_parser import MoodParser, EMOTION_DESCRIPTIONS, VALID_EMOTIONS
+from app.services.mood_parser import EMOTION_DESCRIPTIONS, VALID_EMOTIONS, MoodParser
 
 router = APIRouter(prefix="/arc", tags=["arc"])
 
@@ -122,16 +122,16 @@ class ArcRequest(BaseModel):
     )
     duration_minutes: int = Field(default=30, ge=5, le=180)
     # Optional pre-resolved emotions (from /arc/suggest) — skips Claude parsing
-    source_emotion: Optional[str] = Field(
+    source_emotion: str | None = Field(
         None, description="Pre-resolved source — bypasses mood parsing"
     )
-    target_emotion: Optional[str] = Field(
+    target_emotion: str | None = Field(
         None, description="Pre-resolved target — bypasses mood parsing"
     )
     # Optional language filter — only use tracks in these languages.
     # The emotion classifier is language-agnostic (audio features only), so
     # emotional coherence is preserved regardless of which languages are selected.
-    language_filter: Optional[list[str]] = Field(
+    language_filter: list[str] | None = Field(
         None, description="BCP-47 language codes to include, e.g. ['en', 'hi', 'te']"
     )
 
@@ -430,7 +430,7 @@ def get_user_graph(
 @router.post("/preview")
 def preview_arc_path(
     request: ArcPreviewRequest,
-    user_id: str = Depends(get_current_user_id),  # noqa: ARG001
+    user_id: str = Depends(get_current_user_id),
 ):
     """Fast path-only preview — no track selection."""
     source = request.source_emotion.lower()
@@ -461,7 +461,7 @@ def preview_arc_path(
 
 @router.get("/emotions")
 def get_valid_emotions(
-    user_id: str = Depends(get_current_user_id),  # noqa: ARG001
+    user_id: str = Depends(get_current_user_id),
 ):
     """Returns all 12 valid emotion labels with descriptions and energy centers."""
     return {

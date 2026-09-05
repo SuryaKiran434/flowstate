@@ -1,12 +1,12 @@
 import os
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user_id
 from app.db.session import get_db
-from app.services.emotion_classifier import EmotionClassifier, _DEFAULT_MODEL_PATH
+from app.services.emotion_classifier import _DEFAULT_MODEL_PATH, EmotionClassifier
 from app.services.reclassify_service import ModelNotAvailableError, ReclassifyService
 
 _reclassifier = ReclassifyService()
@@ -287,7 +287,7 @@ def get_arc_pool(
 
 @router.get("/model-status")
 def get_model_status(
-    user_id: str = Depends(get_current_user_id),  # noqa: ARG001 — auth gate only
+    user_id: str = Depends(get_current_user_id),
 ):
     """
     Return metadata about the trained emotion classifier.
@@ -321,12 +321,15 @@ def get_language_stats(
     is inherently language-agnostic (it operates on raw audio features), so
     tracks in any language can participate in emotionally coherent arcs.
     """
+    from collections import Counter
+
+    from app.services.language_detector import (
+        LANGUAGE_FLAGS,
+        LANGUAGE_NAMES,
+    )
     from app.services.language_detector import (
         detect as detect_language,
-        LANGUAGE_NAMES,
-        LANGUAGE_FLAGS,
     )
-    from collections import Counter
 
     rows = db.execute(
         text("""
