@@ -1,3 +1,15 @@
+# Dependabot: grouping + auto-merge
+#
+# Each ecosystem below opens ONE grouped PR per week covering its minor and
+# patch updates, rather than one PR per dependency. Majors are kept OUT of the
+# groups, so they arrive as their own PRs.
+#
+# That split is exactly what .github/workflows/dependabot-auto-merge.yml keys
+# on: a grouped minor/patch PR merges itself once the required checks pass, a
+# major waits for a human. fetch-metadata reports the HIGHEST bump in a PR, so
+# excluding majors from the groups is what stops one breaking change from
+# either riding along unseen or stalling an entire batch.
+
 # Dependabot configuration — Flowstate
 #
 # Ecosystems mirror what actually lives in this repo:
@@ -29,6 +41,15 @@ updates:
     labels:
       - "dependencies"
       - "backend"
+    groups:
+      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
+      # out so a group can never carry a breaking change (see header).
+      pip-backend:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # ─── Frontend: npm (frontend/package.json) ───────────────────────
   - package-ecosystem: "npm"
@@ -46,6 +67,15 @@ updates:
     labels:
       - "dependencies"
       - "frontend"
+    groups:
+      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
+      # out so a group can never carry a breaking change (see header).
+      npm-frontend:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # ─── Docker base images ──────────────────────────────────────────
   # One entry per directory containing a Dockerfile.
@@ -64,6 +94,15 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    groups:
+      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
+      # out so a group can never carry a breaking change (see header).
+      docker-backend:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "docker"
     directory: "/frontend"
@@ -80,6 +119,15 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    groups:
+      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
+      # out so a group can never carry a breaking change (see header).
+      docker-frontend:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "docker"
     directory: "/airflow"
@@ -96,6 +144,15 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    groups:
+      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
+      # out so a group can never carry a breaking change (see header).
+      docker-airflow:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # ─── GitHub Actions (.github/workflows) ──────────────────────────
   - package-ecosystem: "github-actions"
@@ -106,6 +163,15 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+    groups:
+      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
+      # out so a group can never carry a breaking change (see header).
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
     # Action majors ARE taken: GitHub deprecates old action runtimes
     # (v4/v5 tags now force onto Node 24), so these need to move.
