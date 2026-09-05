@@ -728,6 +728,20 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
   const [playingIndex, setPlayingIndex] = useState(null)
   const [replanNotice, setReplanNotice] = useState(null)  // string | null
   const [replanning, setReplanning]   = useState(false)
+  // ── Mid-session natural language adjust ───────────────────────────────────
+  const [commandOpen, setCommandOpen]   = useState(false)
+  const [commandText, setCommandText]   = useState('')
+  const [adjusting, setAdjusting]       = useState(false)
+  const commandInputRef                 = useRef(null)
+  // ── Share arc as template ─────────────────────────────────────────────────
+  const [sharing, setSharing]           = useState(false)
+  const [shareSuccess, setShareSuccess] = useState(false)
+  // NOTE: every useState/useRef for this component is declared here, above the
+  // render-scope helpers below (handleTrackClick et al). Declaring state in the
+  // middle of the body lets the React Compiler's reactive scope for a later
+  // useCallback span across those declarations, at which point the setters stop
+  // being recognised as stable and get inferred as extra dependencies — which
+  // breaks react-hooks/preserve-manual-memoization. Keep new state up here.
   const playerRef                     = useRef(null)
   const sessionStatus                 = useRef('generated') // track without re-render
   const quickSkipCountRef             = useRef(0)
@@ -835,16 +849,6 @@ function ArcResultScreen({ arc: initialArc, onReset, spotifyToken, sessionId, au
     postTrackEvent(newIndex, 'play')
     setPlayingIndex(newIndex)
   }, [patchSession, postTrackEvent])
-
-  // ── Mid-session natural language adjust ───────────────────────────────────
-  const [commandOpen, setCommandOpen]   = useState(false)
-  const [commandText, setCommandText]   = useState('')
-  const [adjusting, setAdjusting]       = useState(false)
-  const commandInputRef                 = useRef(null)
-
-  // ── Share arc as template ─────────────────────────────────────────────────
-  const [sharing, setSharing]           = useState(false)
-  const [shareSuccess, setShareSuccess] = useState(false)
 
   const handleShare = useCallback(async () => {
     if (sharing || !authToken) return
