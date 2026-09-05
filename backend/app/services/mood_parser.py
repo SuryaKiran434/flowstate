@@ -12,8 +12,13 @@ Example:
 """
 
 import json
+import logging
+
 import httpx
+
 from app.core.config import get_settings
+
+log = logging.getLogger(__name__)
 
 VALID_EMOTIONS = [
     "energetic",
@@ -125,8 +130,8 @@ class MoodParser:
                 result = await self._call_claude(mood_text)
                 result["method"] = "claude"
                 return result
-            except Exception as e:
-                print(f"Claude mood parsing failed: {e} — using keyword fallback")
+            except Exception:
+                log.exception("Claude mood parsing failed — using keyword fallback")
 
         return self._fallback_from_keywords(mood_text)
 
@@ -154,8 +159,7 @@ class MoodParser:
             # Strip markdown fences if present
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
+                raw = raw.removeprefix("json")
             raw = raw.strip()
 
             parsed = json.loads(raw)
@@ -342,8 +346,10 @@ class MoodParser:
                 result = await self._call_claude_adjust(context)
                 result["method"] = "claude"
                 return result
-            except Exception as e:
-                print(f"Claude adjustment parsing failed: {e} — using keyword fallback")
+            except Exception:
+                log.exception(
+                    "Claude adjustment parsing failed — using keyword fallback"
+                )
 
         return self._fallback_adjustment(command, current_target)
 
@@ -369,8 +375,7 @@ class MoodParser:
             raw = data["content"][0]["text"].strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
+                raw = raw.removeprefix("json")
             raw = raw.strip()
 
             parsed = json.loads(raw)

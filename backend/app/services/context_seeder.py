@@ -23,13 +23,16 @@ Example output:
 """
 
 import json
+import logging
 from datetime import datetime, timezone
 
 import httpx
 
 from app.core.config import get_settings
-from app.services.mood_parser import VALID_EMOTIONS, EMOTION_DESCRIPTIONS
 from app.services.longitudinal_analyzer import LongitudinalAnalyzer
+from app.services.mood_parser import EMOTION_DESCRIPTIONS, VALID_EMOTIONS
+
+log = logging.getLogger(__name__)
 
 # ── Time-of-day buckets ───────────────────────────────────────────────────────
 
@@ -129,9 +132,9 @@ class ContextSeeder:
                 result["context_signals"] = context_signals
                 result["method"] = "claude"
                 return result
-            except Exception as e:
-                print(
-                    f"Context seeder Claude call failed: {e} — using heuristic fallback"
+            except Exception:
+                log.exception(
+                    "Context seeder Claude call failed — using heuristic fallback"
                 )
 
         return self._heuristic(
@@ -170,6 +173,7 @@ class ContextSeeder:
                 for r in rows
             ]
         except Exception:
+            log.exception("Failed to load recent sessions for user %s", user_id)
             return []
 
     # ── Claude call ───────────────────────────────────────────────────────────
@@ -224,8 +228,7 @@ class ContextSeeder:
             raw = data["content"][0]["text"].strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
+                raw = raw.removeprefix("json")
             raw = raw.strip()
 
             parsed = json.loads(raw)
