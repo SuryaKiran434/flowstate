@@ -19,7 +19,7 @@ httpx==0.25.2
 
 # ─── Data Validation ─────────────────────────────────────────────
 pydantic==2.5.2
-pydantic-settings==2.1.0
+pydantic-settings==2.15.0
 
 # ─── Audio ML ────────────────────────────────────────────────────
 # librosa: feature extraction (MFCCs, chroma, spectral, tempo)
