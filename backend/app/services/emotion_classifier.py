@@ -254,14 +254,14 @@ class EmotionClassifier:
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
-    def save(self, path: str = None) -> None:
+    def save(self, path: str | None = None) -> None:
         """Serialize the fitted pipeline to disk with joblib."""
         path = path or _DEFAULT_MODEL_PATH
         os.makedirs(os.path.dirname(path), exist_ok=True)
         joblib.dump(self.model, path)
         log.info("EmotionClassifier saved to %s", path)
 
-    def save_meta(self, metrics: dict, path: str = None) -> None:
+    def save_meta(self, metrics: dict, path: str | None = None) -> None:
         """
         Write a JSON sidecar with metrics + timestamp.
         Used by the DAG quality gate (checks macro_f1 before running reclassification).
@@ -270,21 +270,21 @@ class EmotionClassifier:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         meta = {
             **metrics,
-            "trained_at": datetime.datetime.utcnow().isoformat(),
+            "trained_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         with open(path, "w") as f:
             json.dump(meta, f, indent=2)
         log.info("EmotionClassifier metadata saved to %s", path)
 
     @classmethod
-    def load(cls, path: str = None) -> "EmotionClassifier":
+    def load(cls, path: str | None = None) -> "EmotionClassifier":
         """Deserialize a previously saved classifier."""
         inst = cls()
         inst.model = joblib.load(path or _DEFAULT_MODEL_PATH)
         return inst
 
     @staticmethod
-    def load_meta(path: str = None) -> dict:
+    def load_meta(path: str | None = None) -> dict:
         """
         Load metadata JSON sidecar. Returns empty dict if file not found.
         Used by the DAG quality gate.
@@ -320,6 +320,13 @@ class EmotionClassifier:
                 mlflow.log_metrics(scalar_metrics)
                 mlflow.log_params(params)
             return True
-        except Exception as exc:
+        except ImportError as exc:
+            # Expected in offline/minimal installs — mlflow is an optional extra.
             log.debug("MLflow logging skipped: %s", exc)
+            return False
+        except Exception:
+            # Deliberate resilience boundary: the MLflow server can fail in many
+            # ways (network, auth, backend store) and training must not abort.
+            # Broad, but never silent — the traceback is logged.
+            log.exception("MLflow logging failed")
             return False
