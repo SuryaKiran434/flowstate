@@ -43,6 +43,15 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # scipy >=1.18 requires numpy>=2.0.0 (1.17.1 is the last release that
+      # accepts numpy 1.x, at numpy>=1.26.4,<2.7). numpy 1->2 is a MAJOR, so the
+      # rule above holds numpy on 1.x -- which makes any group containing both
+      # scipy 1.18 and numpy 1.x unsatisfiable, and pip fails the whole batch
+      # before a single test runs. That is what blocked PR #49 and its other 11
+      # updates. Capping scipy here keeps the batch resolvable; lift this the
+      # day numpy 2 is adopted deliberately.
+      - dependency-name: "scipy"
+        versions: [">=1.18"]
     labels:
       - "dependencies"
       - "backend"
