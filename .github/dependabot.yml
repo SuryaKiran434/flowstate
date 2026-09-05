@@ -4,6 +4,11 @@
 # patch updates, rather than one PR per dependency. Majors are kept OUT of the
 # groups, so they arrive as their own PRs.
 #
+# The docker blocks are the exception: they group PATCH only. A base image tag's
+# "major" is the product major, so python:3.11-slim -> 3.14-slim is a whole
+# runtime jump that Dependabot still calls a minor. Those come as their own PR
+# and the workflow declines to auto-merge them.
+#
 # That split is exactly what .github/workflows/dependabot-auto-merge.yml keys
 # on: a grouped minor/patch PR merges itself once the required checks pass, a
 # major waits for a human. fetch-metadata reports the HIGHEST bump in a PR, so
@@ -95,13 +100,14 @@ updates:
       - "dependencies"
       - "docker"
     groups:
-      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
-      # out so a group can never carry a breaking change (see header).
+      # Collapses this ecosystem's weekly updates into ONE PR. PATCH ONLY here:
+      # a base image tag's "major" is the product major, so python:3.11 -> 3.14
+      # reads as a minor while being a whole runtime jump. Docker minors get their
+      # own PR and are held back from auto-merge by the workflow.
       docker-backend:
         patterns:
           - "*"
         update-types:
-          - "minor"
           - "patch"
 
   - package-ecosystem: "docker"
@@ -120,13 +126,14 @@ updates:
       - "dependencies"
       - "docker"
     groups:
-      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
-      # out so a group can never carry a breaking change (see header).
+      # Collapses this ecosystem's weekly updates into ONE PR. PATCH ONLY here:
+      # a base image tag's "major" is the product major, so python:3.11 -> 3.14
+      # reads as a minor while being a whole runtime jump. Docker minors get their
+      # own PR and are held back from auto-merge by the workflow.
       docker-frontend:
         patterns:
           - "*"
         update-types:
-          - "minor"
           - "patch"
 
   - package-ecosystem: "docker"
@@ -145,13 +152,14 @@ updates:
       - "dependencies"
       - "docker"
     groups:
-      # Collapses this ecosystem's weekly updates into ONE PR. Majors are left
-      # out so a group can never carry a breaking change (see header).
+      # Collapses this ecosystem's weekly updates into ONE PR. PATCH ONLY here:
+      # a base image tag's "major" is the product major, so python:3.11 -> 3.14
+      # reads as a minor while being a whole runtime jump. Docker minors get their
+      # own PR and are held back from auto-merge by the workflow.
       docker-airflow:
         patterns:
           - "*"
         update-types:
-          - "minor"
           - "patch"
 
   # ─── GitHub Actions (.github/workflows) ──────────────────────────
