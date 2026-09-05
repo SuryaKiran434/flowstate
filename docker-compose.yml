@@ -126,7 +126,7 @@ services:
 
   # ─── MLflow Tracking ─────────────────────────────────────────────
   mlflow:
-    image: python:3.11-slim
+    image: python:3.12-slim
     container_name: flowstate_mlflow
     ports:
       - "5001:5000"

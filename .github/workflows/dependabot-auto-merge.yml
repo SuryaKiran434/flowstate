@@ -38,11 +38,11 @@ jobs:
       # single major holds the whole PR back rather than riding along unseen.
       #
       # Docker minors are excluded, and that exclusion is load-bearing. A base
-      # image tag's "major" is the product major, so `python:3.11-slim` ->
-      # `python:3.14-slim` is a THREE-feature-release runtime jump that
+      # image tag's "major" is the product major, so `python:3.12-slim` ->
+      # `python:3.14-slim` is a TWO-feature-release runtime jump that
       # Dependabot classifies as a mere minor. Same shape for
       # `apache/airflow:2.11.2`. Those need eyes; the PR still opens, it just
-      # does not merge itself. Docker patches (3.11.9 -> 3.11.10) still do.
+      # does not merge itself. Docker patches (3.12.9 -> 3.12.10) still do.
       - name: Enable auto-merge for patch, and non-Docker minor, updates
         if: >-
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
