@@ -36,8 +36,18 @@ jobs:
 
       # For a grouped PR, update-type is the HIGHEST bump in the batch, so a
       # single major holds the whole PR back rather than riding along unseen.
-      - name: Enable auto-merge for patch and minor updates
-        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+      #
+      # Docker minors are excluded, and that exclusion is load-bearing. A base
+      # image tag's "major" is the product major, so `python:3.11-slim` ->
+      # `python:3.14-slim` is a THREE-feature-release runtime jump that
+      # Dependabot classifies as a mere minor. Same shape for
+      # `apache/airflow:2.11.2`. Those need eyes; the PR still opens, it just
+      # does not merge itself. Docker patches (3.11.9 -> 3.11.10) still do.
+      - name: Enable auto-merge for patch, and non-Docker minor, updates
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          (steps.meta.outputs.update-type == 'version-update:semver-minor' &&
+          steps.meta.outputs.package-ecosystem != 'docker')
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
