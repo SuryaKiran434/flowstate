@@ -44,7 +44,7 @@ yt-dlp>=2024.12.23
 pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==6.3.0
-ruff==0.15.8
+ruff==0.16.5
 
 # NOTE: torch, mlflow, and apache-airflow excluded intentionally.
 # - torch: install separately when building the ML module (Phase 3)
