@@ -32,10 +32,13 @@ Output
     for the diagnostic /arc/user-graph endpoint.
 """
 
+import logging
 from collections import defaultdict
 from copy import deepcopy
 
 from app.services.arc_planner import EMOTION_GRAPH
+
+log = logging.getLogger(__name__)
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
 #
@@ -151,6 +154,10 @@ class GraphLearner:
             ).fetchall()
 
         except Exception:
+            # Deliberate resilience boundary: any DB problem degrades to "no
+            # signals", so load_user_graph falls back to the global EMOTION_GRAPH
+            # instead of failing the caller. Log the traceback so it isn't silent.
+            log.exception("GraphLearner._query_signals failed for user %s", user_id)
             return completions, skips
 
         for row in rows:

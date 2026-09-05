@@ -14,8 +14,10 @@ import base64
 import hashlib
 import logging
 import os
+from datetime import datetime, timedelta, timezone
+
 import httpx
-from datetime import datetime, timedelta
+
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -133,8 +135,13 @@ async def get_spotify_user_profile(access_token: str) -> dict:
 
 
 def token_expires_at(expires_in_seconds: int) -> datetime:
-    """Calculate token expiry datetime from expires_in seconds."""
-    return datetime.utcnow() + timedelta(seconds=expires_in_seconds)
+    """
+    Calculate token expiry from Spotify's ``expires_in`` seconds.
+
+    Returns a timezone-aware UTC datetime. The value is stored in the
+    ``users.token_expires_at`` column, which is declared ``DateTime(timezone=True)``.
+    """
+    return datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)
 
 
 # ── Personal Library Helpers (used by Airflow DAG) ────────────────────────────
