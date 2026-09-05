@@ -1,31 +1,31 @@
 # ─── Web Framework ───────────────────────────────────────────────
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
 python-multipart==0.0.32
 
 # ─── Database ────────────────────────────────────────────────────
-sqlalchemy==2.0.23
+sqlalchemy==2.0.52
 alembic==1.19.1
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.12
 pgvector==0.5.0
 
 # ─── Cache ───────────────────────────────────────────────────────
-redis==5.0.1
+redis==5.3.1
 
 # ─── Auth & Security ─────────────────────────────────────────────
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
-httpx==0.25.2
+httpx==0.28.1
 
 # ─── Data Validation ─────────────────────────────────────────────
-pydantic==2.5.2
-pydantic-settings==2.1.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
 
 # ─── Audio ML ────────────────────────────────────────────────────
 # librosa: feature extraction (MFCCs, chroma, spectral, tempo)
-librosa==0.10.1
-numpy==1.26.2
-scipy==1.11.4
+librosa==0.11.0
+numpy==1.26.4
+scipy==1.18.1
 scikit-learn==1.9.0
 # yt-dlp: sources audio from YouTube for tracks missing Spotify previews.
 # Spotify Audio Features API (/audio-features) is blocked in Development Mode
@@ -44,7 +44,7 @@ yt-dlp>=2024.12.23
 pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==6.3.0
-ruff==0.15.8
+ruff==0.16.5
 
 # NOTE: torch, mlflow, and apache-airflow excluded intentionally.
 # - torch: install separately when building the ML module (Phase 3)
