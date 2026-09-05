@@ -115,7 +115,7 @@ Build a feature that lets users define a start emotion and end emotion, and auto
 - MacBook Pro M1 (Apple Silicon) locally
 - Zero paid infrastructure during development
 - All dependencies open source
-- Python 3.11+, Node.js 18+
+- Python 3.12+, Node.js 18+
 - Spotify Development Mode: `/audio-features`, playlist tracks, and recommendations endpoints blocked → use yt-dlp + librosa pipeline
 
 ---

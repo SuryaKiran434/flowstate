@@ -5,7 +5,7 @@
 # groups, so they arrive as their own PRs.
 #
 # The docker blocks are the exception: they group PATCH only. A base image tag's
-# "major" is the product major, so python:3.11-slim -> 3.14-slim is a whole
+# "major" is the product major, so python:3.12-slim -> 3.14-slim is a whole
 # runtime jump that Dependabot still calls a minor. Those come as their own PR
 # and the workflow declines to auto-merge them.
 #
@@ -101,7 +101,7 @@ updates:
       - "docker"
     groups:
       # Collapses this ecosystem's weekly updates into ONE PR. PATCH ONLY here:
-      # a base image tag's "major" is the product major, so python:3.11 -> 3.14
+      # a base image tag's "major" is the product major, so python:3.12 -> 3.14
       # reads as a minor while being a whole runtime jump. Docker minors get their
       # own PR and are held back from auto-merge by the workflow.
       docker-backend:
@@ -127,7 +127,7 @@ updates:
       - "docker"
     groups:
       # Collapses this ecosystem's weekly updates into ONE PR. PATCH ONLY here:
-      # a base image tag's "major" is the product major, so python:3.11 -> 3.14
+      # a base image tag's "major" is the product major, so python:3.12 -> 3.14
       # reads as a minor while being a whole runtime jump. Docker minors get their
       # own PR and are held back from auto-merge by the workflow.
       docker-frontend:
@@ -153,7 +153,7 @@ updates:
       - "docker"
     groups:
       # Collapses this ecosystem's weekly updates into ONE PR. PATCH ONLY here:
-      # a base image tag's "major" is the product major, so python:3.11 -> 3.14
+      # a base image tag's "major" is the product major, so python:3.12 -> 3.14
       # reads as a minor while being a whole runtime jump. Docker minors get their
       # own PR and are held back from auto-merge by the workflow.
       docker-airflow:

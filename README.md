@@ -4,7 +4,7 @@
 
 **Flowstate** is an emotional arc engine that curates dynamic listening sessions based on where you are emotionally and where you want to be. Instead of static mood playlists, Flowstate asks *"where are you, and where do you want to go?"* — then builds a musical bridge using audio ML, graph-based path planning, Claude-powered mood parsing, real-time Spotify playback, and a full suite of adaptive and social features built on top.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=white)](https://reactjs.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%20(pgvector)-336791?style=flat&logo=postgresql&logoColor=white)](https://postgresql.org)
@@ -374,7 +374,7 @@ There are two supported paths. **Docker Compose** is the one to use unless you h
 |---|---|---|
 | Docker Engine | 20.10+ | Both paths (manual path still uses it for Postgres/Redis) |
 | Docker Compose | v2 (`docker compose`) or v1 (`docker-compose`) | Compose path — `flowstate.sh` invokes the v1 `docker-compose` binary |
-| Python | 3.11 | Manual backend (CI pins 3.11; `backend/Dockerfile` uses `python:3.11-slim`) |
+| Python | 3.12 | Manual backend (CI pins 3.12; `backend/Dockerfile` uses `python:3.12-slim`) |
 | Node.js | 18 | Manual frontend (CI pins 18; `frontend/Dockerfile` uses `node:18-alpine`) |
 | ffmpeg + libsndfile | any recent | Manual backend only — librosa audio decoding |
 | Spotify Developer app | — | OAuth. [Create one](https://developer.spotify.com/dashboard) |
@@ -424,7 +424,7 @@ The stack is six services:
 | Backend | `flowstate_backend` | `./backend/Dockerfile` | 8000 | http://localhost:8000 · [/docs](http://localhost:8000/docs) |
 | Frontend | `flowstate_frontend` | `./frontend/Dockerfile` | 3000 | http://localhost:3000 |
 | Airflow | `flowstate_airflow` | `./airflow/Dockerfile` | 8080 | http://localhost:8080 (admin / admin) |
-| MLflow | `flowstate_mlflow` | `python:3.11-slim` | 5001 → 5000 | http://localhost:5001 |
+| MLflow | `flowstate_mlflow` | `python:3.12-slim` | 5001 → 5000 | http://localhost:5001 |
 
 Database setup is automatic, for both databases:
 
@@ -459,7 +459,7 @@ docker compose up -d db redis
 
 ```bash
 cd backend
-python3.11 -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # macOS: brew install ffmpeg libsndfile
@@ -548,9 +548,9 @@ The backend suite needs no database or Redis — every DB and network interactio
 cd backend && python3 -m pytest
 ```
 
-568 tests across 20 test files, **all passing** on Python 3.11 (the version CI and `backend/Dockerfile` use). Coverage spans every service, endpoint function, and integration path.
+568 tests across 20 test files, **all passing** on Python 3.12 (the version CI and `backend/Dockerfile` use). Coverage spans every service, endpoint function, and integration path.
 
-The failure in `test_graph_learner.py::TestUserGraphEndpoint::test_generate_arc_includes_personalised_flag` noted in earlier revisions of this file was environment-specific: the test drove its own loop via the deprecated `asyncio.get_event_loop().run_until_complete(...)`, which behaves differently on newer Python versions than on 3.11. It is now a plain `async def` handled by pytest-asyncio, so it no longer depends on that.
+The failure in `test_graph_learner.py::TestUserGraphEndpoint::test_generate_arc_includes_personalised_flag` noted in earlier revisions of this file was environment-specific: the test drove its own loop via the deprecated `asyncio.get_event_loop().run_until_complete(...)`, which behaves differently across Python versions. It is now a plain `async def` handled by pytest-asyncio, so it no longer depends on that.
 
 | Test File | Coverage |
 |---|---|
@@ -620,7 +620,7 @@ into one PR per week rather than one PR per dependency, and majors are kept out 
 batch can never carry a breaking change. `.github/workflows/dependabot-auto-merge.yml` keys on that
 split: a grouped PR queues itself to merge once the required checks pass, while a major waits for a
 human. The docker groups are **patch-only** on purpose — a base image tag's "major" is the product
-major, so `python:3.11-slim` → `3.14-slim` reads to Dependabot as a minor while being a whole runtime
+major, so `python:3.12-slim` → `3.14-slim` reads to Dependabot as a minor while being a whole runtime
 jump. Docker minors therefore arrive as their own PR and are held back from auto-merge.
 
 `.github/workflows/slack-notify.yml` posts a push notification to a Slack webhook on every branch.
@@ -653,7 +653,7 @@ jump. Docker minors therefore arrive as their own PR and are held back from auto
 | Backend | FastAPI 0.104.1, SQLAlchemy 2.0.23, Pydantic v2 (2.5.2), uvicorn 0.24.0 |
 | Database | PostgreSQL 15 (`pgvector/pgvector:pg15`) |
 | Cache / state | Redis 7 (`redis` 5.0.1 client) |
-| Pipeline | Apache Airflow 2.11.2 (`apache/airflow:2.11.2-python3.11`) |
+| Pipeline | Apache Airflow 2.11.2 (`apache/airflow:2.11.2-python3.12`) |
 | Frontend | React 18, D3.js v7, Vite 6, react-router-dom 7, axios |
 | Playback | Spotify Web Playback SDK |
 | Auth | Spotify OAuth2 PKCE, JWT (python-jose) |
