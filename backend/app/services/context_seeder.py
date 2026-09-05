@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 import httpx
 
 from app.core.config import get_settings
+from app.core.log_sanitize import scrub_for_log
 from app.services.longitudinal_analyzer import LongitudinalAnalyzer
 from app.services.mood_parser import EMOTION_DESCRIPTIONS, VALID_EMOTIONS
 
@@ -173,7 +174,9 @@ class ContextSeeder:
                 for r in rows
             ]
         except Exception:
-            log.exception("Failed to load recent sessions for user %s", user_id)
+            log.exception(
+                "Failed to load recent sessions for user %s", scrub_for_log(user_id)
+            )
             return []
 
     # ── Claude call ───────────────────────────────────────────────────────────

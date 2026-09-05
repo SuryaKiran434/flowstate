@@ -15,6 +15,7 @@ import logging
 
 from sqlalchemy import text
 
+from app.core.log_sanitize import scrub_for_log
 from app.services.spotify_client import (
     get_playlist_tracks,
     get_top_tracks,
@@ -101,12 +102,16 @@ async def seed_user_library(user_id: str, access_token: str, db) -> int:
             # catch stays broad — but it is logged rather than swallowed.
             except Exception:
                 log.exception(
-                    "seeder: skipping playlist %s for user %s", pl["id"], user_id
+                    "seeder: skipping playlist %s for user %s",
+                    scrub_for_log(pl["id"]),
+                    scrub_for_log(user_id),
                 )
     # Deliberate resilience boundary: if the Spotify playlist API is down the
     # user still gets whatever top tracks we can fetch below.
     except Exception:
-        log.exception("seeder: playlist source failed for user %s", user_id)
+        log.exception(
+            "seeder: playlist source failed for user %s", scrub_for_log(user_id)
+        )
 
     # ── Source 2: Top tracks (3 time ranges) ─────────────────────────────────
     for time_range in ("short_term", "medium_term", "long_term"):
@@ -139,6 +144,8 @@ async def seed_user_library_background(user_id: str, access_token: str) -> None:
     # Outermost boundary of a fire-and-forget background task: nothing above
     # this frame can handle an error, so catch broadly and log with traceback.
     except Exception:
-        log.exception("seeder: background seed failed for user %s", user_id)
+        log.exception(
+            "seeder: background seed failed for user %s", scrub_for_log(user_id)
+        )
     finally:
         db.close()
